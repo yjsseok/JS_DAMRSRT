@@ -30,8 +30,9 @@
         {
             this.listStatus = new System.Windows.Forms.ListBox();
             this.Btn_code_load = new System.Windows.Forms.Button();
-            this.button2 = new System.Windows.Forms.Button();
-            this.button3 = new System.Windows.Forms.Button();
+            this.Btn_Load_FR = new System.Windows.Forms.Button();
+            this.Btn_Load_Dam = new System.Windows.Forms.Button();
+            this.Btn_Load_AR = new System.Windows.Forms.Button();
             this.SuspendLayout();
             // 
             // listStatus
@@ -40,7 +41,7 @@
             this.listStatus.ItemHeight = 12;
             this.listStatus.Location = new System.Drawing.Point(12, 55);
             this.listStatus.Name = "listStatus";
-            this.listStatus.Size = new System.Drawing.Size(656, 364);
+            this.listStatus.Size = new System.Drawing.Size(728, 592);
             this.listStatus.TabIndex = 0;
             // 
             // Btn_code_load
@@ -53,32 +54,44 @@
             this.Btn_code_load.UseVisualStyleBackColor = true;
             this.Btn_code_load.Click += new System.EventHandler(this.Btn_Check_code);
             // 
-            // button2
+            // Btn_Load_FR
             // 
-            this.button2.Location = new System.Drawing.Point(127, 26);
-            this.button2.Name = "button2";
-            this.button2.Size = new System.Drawing.Size(105, 23);
-            this.button2.TabIndex = 2;
-            this.button2.Text = "button2";
-            this.button2.UseVisualStyleBackColor = true;
-            this.button2.Click += new System.EventHandler(this.Btn_Process_LoadData);
+            this.Btn_Load_FR.Location = new System.Drawing.Point(137, 26);
+            this.Btn_Load_FR.Name = "Btn_Load_FR";
+            this.Btn_Load_FR.Size = new System.Drawing.Size(144, 23);
+            this.Btn_Load_FR.TabIndex = 2;
+            this.Btn_Load_FR.Text = "유량";
+            this.Btn_Load_FR.UseVisualStyleBackColor = true;
+            this.Btn_Load_FR.Click += new System.EventHandler(this.Btn_Load_FR_Click);
             // 
-            // button3
+            // Btn_Load_Dam
             // 
-            this.button3.Location = new System.Drawing.Point(238, 26);
-            this.button3.Name = "button3";
-            this.button3.Size = new System.Drawing.Size(139, 23);
-            this.button3.TabIndex = 3;
-            this.button3.Text = "button3";
-            this.button3.UseVisualStyleBackColor = true;
+            this.Btn_Load_Dam.Location = new System.Drawing.Point(296, 26);
+            this.Btn_Load_Dam.Name = "Btn_Load_Dam";
+            this.Btn_Load_Dam.Size = new System.Drawing.Size(144, 23);
+            this.Btn_Load_Dam.TabIndex = 3;
+            this.Btn_Load_Dam.Text = "댐저수율";
+            this.Btn_Load_Dam.UseVisualStyleBackColor = true;
+            this.Btn_Load_Dam.Click += new System.EventHandler(this.Btn_Load_Dam_Click);
+            // 
+            // Btn_Load_AR
+            // 
+            this.Btn_Load_AR.Location = new System.Drawing.Point(455, 26);
+            this.Btn_Load_AR.Name = "Btn_Load_AR";
+            this.Btn_Load_AR.Size = new System.Drawing.Size(144, 23);
+            this.Btn_Load_AR.TabIndex = 4;
+            this.Btn_Load_AR.Text = "농업용저수지 저수량";
+            this.Btn_Load_AR.UseVisualStyleBackColor = true;
+            this.Btn_Load_AR.Click += new System.EventHandler(this.Btn_Load_AR_Click);
             // 
             // MainFrm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(800, 450);
-            this.Controls.Add(this.button3);
-            this.Controls.Add(this.button2);
+            this.ClientSize = new System.Drawing.Size(752, 785);
+            this.Controls.Add(this.Btn_Load_AR);
+            this.Controls.Add(this.Btn_Load_Dam);
+            this.Controls.Add(this.Btn_Load_FR);
             this.Controls.Add(this.Btn_code_load);
             this.Controls.Add(this.listStatus);
             this.Name = "MainFrm";
@@ -92,8 +105,9 @@
 
         private System.Windows.Forms.ListBox listStatus;
         private System.Windows.Forms.Button Btn_code_load;
-        private System.Windows.Forms.Button button2;
-        private System.Windows.Forms.Button button3;
+        private System.Windows.Forms.Button Btn_Load_FR;
+        private System.Windows.Forms.Button Btn_Load_Dam;
+        private System.Windows.Forms.Button Btn_Load_AR;
     }
 }
 

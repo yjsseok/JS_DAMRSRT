@@ -13,6 +13,8 @@ using System.ComponentModel;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
+using System.Threading;
 
 using Npgsql;
 
@@ -41,6 +43,29 @@ namespace JS_DAMRSRT
 
             }
         }
+        public class GroupedData
+        {
+            public string Date { get; set; }
+            public string Rsrt { get; set; }
+        }
+        private int CalculateJulianDay(DateTime date)
+        {
+            // 윤년의 2월 29일을 제외하고 Julian Day를 계산
+            int dayOfYear = date.DayOfYear;
+            if (DateTime.IsLeapYear(date.Year) && date.Month > 2)
+            {
+                dayOfYear--;
+            }
+            return dayOfYear;
+        }
+
+        private bool IsLeapYear(int year)
+        {
+            return DateTime.IsLeapYear(year);
+        }
+
+
+
 
         private void Btn_Check_code(object sender, EventArgs e)
         {
@@ -61,7 +86,7 @@ namespace JS_DAMRSRT
             {
                 conn.Open();
 
-                string selectQuery = "SELECT sort, obs FROM drought_code WHERE obs_cd IS NULL OR obs_cd = ''";
+                string selectQuery = "SELECT sort, obsnm FROM drought_code WHERE obs_cd IS NULL OR obs_cd = ''";
                 using (var selectCmd = new NpgsqlCommand(selectQuery, conn))
                 {
                     using (var reader = selectCmd.ExecuteReader())
@@ -69,7 +94,7 @@ namespace JS_DAMRSRT
                         while (reader.Read())
                         {
                             string sort = reader["sort"].ToString();
-                            string obs = reader["obs"].ToString();
+                            string obsnm = reader["obsnm"].ToString();
 
                             string updateQuery = string.Empty;
                             string checkQuery = string.Empty;
@@ -77,18 +102,18 @@ namespace JS_DAMRSRT
                             switch (sort)
                             {
                                 case "Dam":
-                                    checkQuery = "SELECT damcd FROM tb_wamis_mndammain WHERE damnm = @obs";
+                                    checkQuery = "SELECT damcd FROM tb_wamis_mndammain WHERE damnm = @obsnm";
                                     break;
                                 case "AR":
-                                    checkQuery = "SELECT obscd FROM tb_wkw_flw_obs WHERE obsnm = @obs";
+                                    checkQuery = "SELECT obscd FROM tb_wkw_flw_obs WHERE obsnm = @obsnm";
                                     break;
                                 case "FR":
                                     MessageBox.Show("저수지 코드를 입력해야합니다", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                                    WriteStatus($"obs: {obs}의 obs_cd 업데이트에 실패했습니다. 저수지 코드를 입력해야합니다.");
+                                    WriteStatus($"obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다. 저수지 코드를 입력해야합니다.");
                                     continue;
                                 default:
                                     MessageBox.Show("유효하지 않은 sort입니다", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                                    WriteStatus($"obs: {obs}의 obs_cd 업데이트에 실패했습니다. 유효하지 않은 sort입니다.");
+                                    WriteStatus($"obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다. 유효하지 않은 sort입니다.");
                                     continue;
                             }
 
@@ -99,7 +124,7 @@ namespace JS_DAMRSRT
                                     checkConn.Open();
                                     using (var checkCmd = new NpgsqlCommand(checkQuery, checkConn))
                                     {
-                                        checkCmd.Parameters.AddWithValue("@obs", obs);
+                                        checkCmd.Parameters.AddWithValue("@obsnm", obsnm);
                                         using (var checkReader = checkCmd.ExecuteReader())
                                         {
                                             List<string> codes = new List<string>();
@@ -111,53 +136,53 @@ namespace JS_DAMRSRT
                                             if (codes.Count > 1)
                                             {
                                                 string combinedCode = string.Join("_", codes);
-                                                updateQuery = "UPDATE drought_code SET obs_cd = @combinedCode WHERE obs = @obs";
+                                                updateQuery = "UPDATE drought_code SET obs_cd = @combinedCode WHERE obsnm = @obsnm";
                                                 using (var updateConn = new NpgsqlConnection(strConn))
                                                 {
                                                     updateConn.Open();
                                                     using (var updateCmd = new NpgsqlCommand(updateQuery, updateConn))
                                                     {
                                                         updateCmd.Parameters.AddWithValue("@combinedCode", combinedCode);
-                                                        updateCmd.Parameters.AddWithValue("@obs", obs);
+                                                        updateCmd.Parameters.AddWithValue("@obsnm", obsnm);
 
                                                         int rowsAffected = updateCmd.ExecuteNonQuery();
                                                         if (rowsAffected > 0)
                                                         {
-                                                            WriteStatus($"obs: {obs}의 obs_cd가 업데이트되었습니다.");
+                                                            WriteStatus($"obsnm: {obsnm}의 obs_cd가 업데이트되었습니다.");
                                                         }
                                                         else
                                                         {
-                                                            WriteStatus($"obs: {obs}의 obs_cd 업데이트에 실패했습니다.");
+                                                            WriteStatus($"obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다.");
                                                         }
                                                     }
                                                 }
                                             }
                                             else if (codes.Count == 1)
                                             {
-                                                updateQuery = "UPDATE drought_code SET obs_cd = @code WHERE obs = @obs";
+                                                updateQuery = "UPDATE drought_code SET obs_cd = @code WHERE obsnm = @obsnm";
                                                 using (var updateConn = new NpgsqlConnection(strConn))
                                                 {
                                                     updateConn.Open();
                                                     using (var updateCmd = new NpgsqlCommand(updateQuery, updateConn))
                                                     {
                                                         updateCmd.Parameters.AddWithValue("@code", codes[0]);
-                                                        updateCmd.Parameters.AddWithValue("@obs", obs);
+                                                        updateCmd.Parameters.AddWithValue("@obsnm", obsnm);
 
                                                         int rowsAffected = updateCmd.ExecuteNonQuery();
                                                         if (rowsAffected > 0)
                                                         {
-                                                            WriteStatus($"obs: {obs}의 obs_cd가 업데이트되었습니다.");
+                                                            WriteStatus($"obsnm: {obsnm}의 obs_cd가 업데이트되었습니다.");
                                                         }
                                                         else
                                                         {
-                                                            WriteStatus($"obs: {obs}의 obs_cd 업데이트에 실패했습니다.");
+                                                            WriteStatus($"obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다.");
                                                         }
                                                     }
                                                 }
                                             }
                                             else
                                             {
-                                                WriteStatus($"obs: {obs}에 대한 코드 값이 존재하지 않습니다.");
+                                                WriteStatus($"obsnm: {obsnm}에 대한 코드 값이 존재하지 않습니다.");
                                             }
                                         }
                                     }
@@ -171,10 +196,229 @@ namespace JS_DAMRSRT
 
 
 
-        private void Btn_Process_LoadData(object sender, EventArgs e)
+        private void Btn_Load_Dam_Click(object sender, EventArgs e)
+        {
+            Load_Dam();
+        }
+        private void Load_Dam()
+        {
+            string dbIP = Config.dbIP;
+            string dbName = Config.dbName;
+            string dbPort = Config.dbPort;
+            string dbId = Config.dbId;
+            string dbPassword = Config.dbPassword;
+
+            string strConn = String.Format("Server={0};Port={1};User Id={2};Password={3};Database={4};",
+                    dbIP, dbPort, dbId, dbPassword, dbName);
+
+            try
+            {
+                using (var conn = new NpgsqlConnection(strConn))
+                {
+                    conn.Open();
+
+                    string selectQuery = "SELECT sgg_cd, obs_cd FROM drought_code WHERE sort = 'Dam'";
+                    using (var selectCmd = new NpgsqlCommand(selectQuery, conn))
+                    {
+                        using (var reader = selectCmd.ExecuteReader())
+                        {
+                            var scheduler = new LimitedConcurrencyLevelTaskScheduler(Environment.ProcessorCount);
+                            var factory = new TaskFactory(scheduler);
+                            List<Task> tasks = new List<Task>();
+                            ConcurrentDictionary<string, List<string>> correctionLogs = new ConcurrentDictionary<string, List<string>>();
+
+                            while (reader.Read())
+                            {
+                                string sgg_cd = reader["sgg_cd"].ToString();
+                                string obs_cd = reader["obs_cd"].ToString();
+
+                                if (string.IsNullOrEmpty(obs_cd))
+                                {
+                                    continue;
+                                }
+
+                                tasks.Add(factory.StartNew(() => ProcessSggCd(sgg_cd, obs_cd, strConn, correctionLogs)));
+                            }
+
+                            Task.WhenAll(tasks).ContinueWith(t =>
+                            {
+                                foreach (var log in correctionLogs)
+                                {
+                                    WriteStatus($"sgg_cd: {log.Key}의 보정된 데이터:");
+                                    foreach (var message in log.Value)
+                                    {
+                                        WriteStatus(message);
+                                    }
+                                }
+                                WriteStatus("모든 작업이 완료되었습니다.");
+                            });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteStatus($"오류 발생: {ex.Message}");
+            }
+        }
+
+        private void ProcessSggCd(string sgg_cd, string obs_cd, string strConn, ConcurrentDictionary<string, List<string>> correctionLogs)
+        {
+            try
+            {
+                using (var conn = new NpgsqlConnection(strConn))
+                {
+                    conn.Open();
+
+                    string[] obsCodes = obs_cd.Split('_');
+                    List<string> dataLines = new List<string>();
+
+                    foreach (string code in obsCodes)
+                    {
+                        string dataQuery = "SELECT obsdh, rsrt FROM tb_wamis_mnhrdata WHERE damcd = @code";
+                        using (var dataCmd = new NpgsqlCommand(dataQuery, conn))
+                        {
+                            dataCmd.Parameters.AddWithValue("@code", code);
+                            using (var dataReader = dataCmd.ExecuteReader())
+                            {
+                                while (dataReader.Read())
+                                {
+                                    string obsdh = dataReader["obsdh"].ToString();
+                                    string rsrt = dataReader["rsrt"].ToString();
+
+                                    string date = obsdh.Substring(0, 8);
+                                    string hour = obsdh.Substring(8, 2);
+                                    dataLines.Add($"{date},{hour},{rsrt}");
+                                }
+                            }
+                        }
+                    }
+
+                    var groupedData = dataLines
+                        .GroupBy(line => line.Split(',')[0])
+                        .Select(g => new GroupedData
+                        {
+                            Date = g.Key,
+                            Rsrt = g.OrderByDescending(line => line.Split(',')[1])
+                                     .Select(line => line.Split(',')[2])
+                                     .FirstOrDefault(rsrt => !string.IsNullOrEmpty(rsrt) && rsrt != "-9999" && rsrt != "0")
+                        })
+                        .OrderBy(g => g.Date) // 날짜 순서로 정렬
+                        .ToList();
+
+                    // 2월 29일 제거
+                    groupedData = groupedData.Where(data =>
+                    {
+                        DateTime date = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                        return !(date.Month == 2 && date.Day == 29);
+                    }).ToList();
+
+                    string directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DAM_RSRT");
+                    if (!Directory.Exists(directoryPath))
+                    {
+                        Directory.CreateDirectory(directoryPath);
+                    }
+
+                    string filePath = Path.Combine(directoryPath, $"{sgg_cd}.csv");
+                    using (var writer = new StreamWriter(filePath))
+                    {
+                        writer.WriteLine("yyyy,mm,dd,JD,RSRT");
+                        for (int i = 0; i < groupedData.Count; i++)
+                        {
+                            var data = groupedData[i];
+                            if (data.Rsrt == null || data.Rsrt == "0")
+                            {
+                                string dMinus1Rsrt = null;
+                                string dPlus1Rsrt = null;
+
+                                // d-1 값 찾기
+                                if (i > 0)
+                                {
+                                    DateTime previousDate = DateTime.ParseExact(groupedData[i - 1].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                                    DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                                    if ((currentDate - previousDate).TotalDays == 1)
+                                    {
+                                        dMinus1Rsrt = groupedData[i - 1].Rsrt;
+                                    }
+                                }
+
+                                // d+1 값 찾기
+                                if (i < groupedData.Count - 1)
+                                {
+                                    DateTime nextDate = DateTime.ParseExact(groupedData[i + 1].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                                    DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                                    if ((nextDate - currentDate).TotalDays == 1)
+                                    {
+                                        dPlus1Rsrt = groupedData[i + 1].Rsrt;
+                                    }
+                                }
+
+                                // 보정일 이전 이후에 ±7일간 데이터가 있는지 확인
+                                bool hasDataWithin7DaysBefore = false;
+                                bool hasDataWithin7DaysAfter = false;
+                                for (int j = 1; j <= 7; j++)
+                                {
+                                    if (i - j >= 0 && groupedData[i - j].Rsrt != null && groupedData[i - j].Rsrt != "0")
+                                    {
+                                        hasDataWithin7DaysBefore = true;
+                                    }
+                                    if (i + j < groupedData.Count && groupedData[i + j].Rsrt != null && groupedData[i + j].Rsrt != "0")
+                                    {
+                                        hasDataWithin7DaysAfter = true;
+                                    }
+                                }
+
+                            /*    if (!hasDataWithin7DaysBefore || !hasDataWithin7DaysAfter)
+                                {
+                                    string logMessage = $"Date: {sgg_cd}_{data.Date}의 데이터를 보정할 수 없습니다. ±7일간 데이터가 없습니다.";
+                                    correctionLogs.AddOrUpdate(sgg_cd, new List<string> { logMessage }, (key, list) => { list.Add(logMessage); return list; });
+                                    continue;
+                                } */
+
+                                if (dMinus1Rsrt != null && dPlus1Rsrt != null)
+                                {
+                                    data.Rsrt = ((Convert.ToDouble(dMinus1Rsrt) + Convert.ToDouble(dPlus1Rsrt)) / 2).ToString("F2");
+                                    string logMessage = $"Date: {sgg_cd}_{obs_cd}_{data.Date}의 데이터를 보간법으로 보정했습니다@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@.";
+                                    correctionLogs.AddOrUpdate(sgg_cd, new List<string> { logMessage }, (key, list) => { list.Add(logMessage); return list; });
+                                }
+                                else
+                                {
+                                    string logMessage = $"Date: {sgg_cd}_{data.Date}의 데이터를 보정할 수 없습니다.";
+                                    correctionLogs.AddOrUpdate(sgg_cd, new List<string> { logMessage }, (key, list) => { list.Add(logMessage); return list; });
+                                    continue;
+                                }
+                            }
+
+                            string yyyy = data.Date.Substring(0, 4);
+                            string mm = data.Date.Substring(4, 2);
+                            string dd = data.Date.Substring(6, 2);
+                            DateTime date = new DateTime(Convert.ToInt32(yyyy), Convert.ToInt32(mm), Convert.ToInt32(dd));
+                            int jd = CalculateJulianDay(date);
+                            writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Rsrt}");
+                        }
+                    }
+
+                    WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다.");
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteStatus($"sgg_cd: {sgg_cd} 처리 중 오류 발생: {ex.Message}");
+            }
+        }
+
+
+
+
+        private void Btn_Load_AR_Click(object sender, EventArgs e)
         {
 
         }
+        private void Btn_Load_FR_Click(object sender, EventArgs e)
+        {
+
+        }
+
 
 
 
@@ -1652,7 +1896,123 @@ namespace JS_DAMRSRT
             }
             #endregion
         }
+        public class LimitedConcurrencyLevelTaskScheduler : TaskScheduler
+        {
+            // Indicates whether the current thread is processing work items.
+            [ThreadStatic]
+            private static bool _currentThreadIsProcessingItems;
 
+            // The list of tasks to be executed.
+            private readonly LinkedList<Task> _tasks = new LinkedList<Task>(); // protected by lock(_tasks)
+
+            // The maximum concurrency level allowed by this scheduler.
+            private readonly int _maxDegreeOfParallelism;
+
+            // Indicates whether the scheduler is currently processing work items.
+            private int _delegatesQueuedOrRunning = 0; // protected by lock(_tasks)
+
+            // Initializes an instance of the LimitedConcurrencyLevelTaskScheduler class with the specified degree of parallelism.
+            public LimitedConcurrencyLevelTaskScheduler(int maxDegreeOfParallelism)
+            {
+                if (maxDegreeOfParallelism < 1) throw new ArgumentOutOfRangeException("maxDegreeOfParallelism");
+                _maxDegreeOfParallelism = maxDegreeOfParallelism;
+            }
+
+            // Queues a task to the scheduler.
+            protected sealed override void QueueTask(Task task)
+            {
+                // Add the task to the list of tasks to be processed. If there aren't enough
+                // delegates currently queued or running to process tasks, schedule another.
+                lock (_tasks)
+                {
+                    _tasks.AddLast(task);
+                    if (_delegatesQueuedOrRunning < _maxDegreeOfParallelism)
+                    {
+                        ++_delegatesQueuedOrRunning;
+                        NotifyThreadPoolOfPendingWork();
+                    }
+                }
+            }
+
+            // Informs the ThreadPool that there's work to be executed for this scheduler.
+            private void NotifyThreadPoolOfPendingWork()
+            {
+                ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    // Note that the current thread is now processing work items.
+                    _currentThreadIsProcessingItems = true;
+                    try
+                    {
+                        // Process all available items in the queue.
+                        while (true)
+                        {
+                            Task item;
+                            lock (_tasks)
+                            {
+                                // When there are no more items to be processed,
+                                // note that we're done processing, and get out.
+                                if (_tasks.Count == 0)
+                                {
+                                    --_delegatesQueuedOrRunning;
+                                    break;
+                                }
+
+                                // Get the next item from the queue
+                                item = _tasks.First.Value;
+                                _tasks.RemoveFirst();
+                            }
+
+                            // Execute the task we pulled out of the queue
+                            base.TryExecuteTask(item);
+                        }
+                    }
+                    // We're done processing items on the current thread
+                    finally { _currentThreadIsProcessingItems = false; }
+                }, null);
+            }
+
+            // Attempts to execute the specified task on the current thread.
+            protected sealed override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued)
+            {
+                // If this thread isn't already processing a task, we don't support inlining
+                if (!_currentThreadIsProcessingItems) return false;
+
+                // If the task was previously queued, remove it from the queue
+                if (taskWasPreviouslyQueued)
+                    // Try to run the task.
+                    if (TryDequeue(task))
+                        return base.TryExecuteTask(task);
+                    else
+                        return false;
+                else
+                    return base.TryExecuteTask(task);
+            }
+
+            // Attempts to remove a previously scheduled task from the scheduler.
+            protected sealed override bool TryDequeue(Task task)
+            {
+                lock (_tasks) return _tasks.Remove(task);
+            }
+
+            // Gets the maximum concurrency level supported by this scheduler.
+            public sealed override int MaximumConcurrencyLevel { get { return _maxDegreeOfParallelism; } }
+
+            // Gets an enumerable of the tasks currently scheduled on this scheduler.
+            protected sealed override IEnumerable<Task> GetScheduledTasks()
+            {
+                bool lockTaken = false;
+                try
+                {
+                    Monitor.TryEnter(_tasks, ref lockTaken);
+                    if (lockTaken) return _tasks.ToArray();
+                    else throw new NotSupportedException();
+                }
+                finally
+                {
+                    if (lockTaken) Monitor.Exit(_tasks);
+                }
+            }
+        }
 
     }
 }
