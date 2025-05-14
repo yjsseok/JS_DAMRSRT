@@ -33,6 +33,7 @@
             this.Btn_Load_FR = new System.Windows.Forms.Button();
             this.Btn_Load_Dam = new System.Windows.Forms.Button();
             this.Btn_Load_AR = new System.Windows.Forms.Button();
+            this.Btn_Ag_csv = new System.Windows.Forms.Button();
             this.SuspendLayout();
             // 
             // listStatus
@@ -41,7 +42,7 @@
             this.listStatus.ItemHeight = 12;
             this.listStatus.Location = new System.Drawing.Point(12, 55);
             this.listStatus.Name = "listStatus";
-            this.listStatus.Size = new System.Drawing.Size(728, 592);
+            this.listStatus.Size = new System.Drawing.Size(1184, 940);
             this.listStatus.TabIndex = 0;
             // 
             // Btn_code_load
@@ -84,11 +85,22 @@
             this.Btn_Load_AR.UseVisualStyleBackColor = true;
             this.Btn_Load_AR.Click += new System.EventHandler(this.Btn_Load_AR_Click);
             // 
+            // Btn_Ag_csv
+            // 
+            this.Btn_Ag_csv.Location = new System.Drawing.Point(695, 26);
+            this.Btn_Ag_csv.Name = "Btn_Ag_csv";
+            this.Btn_Ag_csv.Size = new System.Drawing.Size(75, 23);
+            this.Btn_Ag_csv.TabIndex = 5;
+            this.Btn_Ag_csv.Text = "SHSI(A)입력 파일 생성";
+            this.Btn_Ag_csv.UseVisualStyleBackColor = true;
+            this.Btn_Ag_csv.Click += new System.EventHandler(this.Btn_Ag_csv_Click);
+            // 
             // MainFrm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(752, 785);
+            this.ClientSize = new System.Drawing.Size(1220, 1013);
+            this.Controls.Add(this.Btn_Ag_csv);
             this.Controls.Add(this.Btn_Load_AR);
             this.Controls.Add(this.Btn_Load_Dam);
             this.Controls.Add(this.Btn_Load_FR);
@@ -108,6 +120,7 @@
         private System.Windows.Forms.Button Btn_Load_FR;
         private System.Windows.Forms.Button Btn_Load_Dam;
         private System.Windows.Forms.Button Btn_Load_AR;
+        private System.Windows.Forms.Button Btn_Ag_csv;
     }
 }
 
