@@ -357,6 +357,34 @@ namespace JS_DAMRSRT
                     {
                         Directory.CreateDirectory(directoryPath);
                     }
+
+                    //////////////////////////////////////////////////////////////////////// 1. groupedData 생성 후, 전체 날짜 리스트 생성
+                    if (groupedData.Count > 0)
+                    {
+                        // 데이터의 최소~최대 날짜 구하기
+                        DateTime minDate = DateTime.ParseExact(groupedData.First().Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                        DateTime maxDate = DateTime.ParseExact(groupedData.Last().Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+
+                        // 전체 날짜 리스트 생성
+                        var allDates = new List<string>();
+                        for (var date = minDate; date <= maxDate; date = date.AddDays(1))
+                            allDates.Add(date.ToString("yyyyMMdd"));
+
+                        // 누락된 날짜를 Rsrt=null로 추가
+                        var mergedData = allDates
+                            .Select(d => groupedData.FirstOrDefault(g => g.Date == d) ?? new GroupedData { Date = d, Rsrt = null })
+                            .ToList();
+
+                        // 2월 29일 제거 (여기서 한 번 더!)
+                        mergedData = mergedData.Where(data =>
+                        {
+                            DateTime date = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                            return !(date.Month == 2 && date.Day == 29);
+                        }).ToList();
+
+                        groupedData = mergedData;
+                    }
+
                     foreach (var sgg_cd in sgg_cds)
                     {
                         string filePath = Path.Combine(directoryPath, $"{sgg_cd}.csv");
