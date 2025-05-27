@@ -50,6 +50,166 @@ namespace JS_DAMRSRT
             public string Rsrt { get; set; }
         }
 
+        private void Btn_ProcessAreaRainfall_CSV_Click(object sender, EventArgs e)
+        {
+            ProcessAreaRainfall_csv();
+        }
+        private void ProcessAreaRainfall_csv()
+        {
+            // string queryDtData = "SELECT tm, stn, rn_day FROM tb_kma_asos_dtdata WHERE tm BETWEEN '19890101' AND '20250401'";
+            string queryDtData = "SELECT tm, stn, rn_day FROM tb_kma_asos_dtdata WHERE tm BETWEEN '19890101' AND '20251231'";
+            string queryThiessen = "SELECT sgg_cd, code, ratio FROM tb_kma_asos_thiessen";
+            string strConn = String.Format("Server={0};Port={1};User Id={2};Password={3};Database={4};Search Path={5};",
+                    Config.dbIP, Config.dbPort, Config.dbId, Config.dbPassword, Config.dbName, Config.dbSchema);
+
+            DataTable dtData = new DataTable();
+            DataTable dtThiessen = new DataTable();
+
+            using (NpgsqlConnection conn = new NpgsqlConnection(strConn))
+            {
+                conn.Open();
+
+                // Load tb_kma_asos_dtdata
+                using (NpgsqlCommand cmd = new NpgsqlCommand(queryDtData, conn))
+                {
+                    using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        dtData.Load(reader);
+                    }
+                }
+
+                // Load tb_kma_asos_thiessen
+                using (NpgsqlCommand cmd = new NpgsqlCommand(queryThiessen, conn))
+                {
+                    using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        dtThiessen.Load(reader);
+                    }
+                }
+            }
+
+            // sgg_cd 별로 큐를 생성하여 비동기로 처리
+            var sggCdGroups = dtThiessen.AsEnumerable().GroupBy(row => row["sgg_cd"].ToString());
+            List<Task> tasks = new List<Task>();
+
+            foreach (var sggCdGroup in sggCdGroups)
+            {
+                string sgg_cd = sggCdGroup.Key;
+                var thiessenRows = sggCdGroup.ToList();
+
+                tasks.Add(Task.Run(() => ProcessSggCdDataToCsv(sgg_cd, thiessenRows, dtData)));
+            }
+
+            Task.WhenAll(tasks).ContinueWith(t => WriteStatus("면적강우 계산이 완료되었습니다."));
+        }
+
+        private void ProcessSggCdDataToCsv(string sgg_cd, List<DataRow> thiessenRows, DataTable dtData)
+        {
+            Dictionary<string, Dictionary<string, decimal>> areaRainfall = new Dictionary<string, Dictionary<string, decimal>>();
+            Dictionary<string, Dictionary<string, decimal>> stnRainfall = new Dictionary<string, Dictionary<string, decimal>>();
+
+            foreach (DataRow dataRow in dtData.AsEnumerable())
+            {
+                string tmString = dataRow["tm"].ToString();
+                DateTime tm;
+                try
+                {
+                    tm = DateTime.ParseExact(tmString, "yyyyMMdd", null);
+                }
+                catch (FormatException)
+                {
+                    WriteStatus($"날짜 형식 변환 오류: {tmString}");
+                    continue;
+                }
+
+                string tmFormatted = tm.ToString("yyyyMMdd"); // 날짜 형식을 yyyyMMdd로 변환
+                string stn = dataRow["stn"].ToString();
+                decimal rn_day = Convert.ToDecimal(dataRow["rn_day"]);
+
+                // 결측 데이터 처리
+                if (rn_day == -9)
+                {
+                    rn_day = 0; // 결측치를 0으로 처리합니다.
+                }
+
+                foreach (var thiessenRow in thiessenRows)
+                {
+                    if (thiessenRow["code"].ToString() == stn)
+                    {
+                        decimal ratio = Convert.ToDecimal(thiessenRow["ratio"]);
+
+                        if (!areaRainfall.ContainsKey(tmFormatted))
+                        {
+                            areaRainfall[tmFormatted] = new Dictionary<string, decimal>();
+                        }
+
+                        if (!areaRainfall[tmFormatted].ContainsKey(stn))
+                        {
+                            areaRainfall[tmFormatted][stn] = 0;
+                        }
+
+                        if (!stnRainfall.ContainsKey(tmFormatted))
+                        {
+                            stnRainfall[tmFormatted] = new Dictionary<string, decimal>();
+                        }
+
+                        if (!stnRainfall[tmFormatted].ContainsKey(stn))
+                        {
+                            stnRainfall[tmFormatted][stn] = 0;
+                        }
+
+                        areaRainfall[tmFormatted][stn] += rn_day * ratio;
+                        stnRainfall[tmFormatted][stn] = rn_day;
+                    }
+                }
+            }
+
+            // CSV 파일 생성
+            string resultCsvFolderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ARE");
+            if (!Directory.Exists(resultCsvFolderPath))
+            {
+                Directory.CreateDirectory(resultCsvFolderPath);
+            }
+
+            string csvFilePath = Path.Combine(resultCsvFolderPath, $"{sgg_cd}.csv");
+            if (File.Exists(csvFilePath))
+            {
+                File.Delete(csvFilePath);
+            }
+
+            int rowCount = 0;
+            using (StreamWriter writer = new StreamWriter(csvFilePath, false, Encoding.UTF8))
+            {
+                // CSV 헤더 작성
+                var header = new List<string> { "yyyy", "MM", "DD", "JD", "면적강우" };
+                header.AddRange(thiessenRows.Select(thiessenRow => $"{thiessenRow["code"]}_{thiessenRow["ratio"]}"));
+                writer.WriteLine(string.Join(",", header));
+
+                // CSV 데이터 작성 (날짜 기준으로 정렬)
+                foreach (var dateRainfall in areaRainfall.OrderBy(dr => dr.Key))
+                {
+                    DateTime tm = DateTime.ParseExact(dateRainfall.Key, "yyyyMMdd", null);
+                    if (tm.Month == 2 && tm.Day == 29) continue; // 윤달 제거
+
+                    int jd = CalculateJulianDay(tm);
+                    var row = new List<string>
+                    {
+                        tm.Year.ToString(),
+                        tm.Month.ToString("D2"),
+                        tm.Day.ToString("D2"),
+                        jd.ToString(),
+                        dateRainfall.Value.Values.Sum().ToString()
+                    };
+
+                    row.AddRange(thiessenRows.Select(thiessenRow => stnRainfall[dateRainfall.Key].ContainsKey(thiessenRow["code"].ToString()) ? stnRainfall[dateRainfall.Key][thiessenRow["code"].ToString()].ToString() : "0"));
+                    writer.WriteLine(string.Join(",", row));
+                    rowCount++;
+                }
+            }
+
+            WriteStatus($"{sgg_cd}.csv 파일 생성 완료 - 행 수: {rowCount}");
+        }
+
 
 
 
@@ -461,122 +621,9 @@ namespace JS_DAMRSRT
                                 writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Rsrt}");
                             }
                         }
+                        //     SaveToDroughtTable("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
+                        SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
                     }
-                    //foreach (var sgg_cd in sgg_cds)
-                    //{
-                    //    string filePath = Path.Combine(directoryPath, $"{sgg_cd}.csv");
-                    //    using (var writer = new StreamWriter(filePath))
-                    //    {
-                    //        writer.WriteLine("yyyy,mm,dd,JD,RSRT");
-                    //        for (int i = 0; i < groupedData.Count; i++)
-                    //        {
-                    //            var data = groupedData[i];
-                    //            if (data.Rsrt == null || data.Rsrt == "0")
-                    //            {
-                    //                //string dMinus1Rsrt = null;
-                    //                //string dPlus1Rsrt = null;
-                    //                ///////////////////////////////////////////////
-                    //                if (data.Rsrt == null || data.Rsrt == "0")
-                    //                {
-                    //                    DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    //                    string closestBeforeRsrt = null;
-                    //                    string closestAfterRsrt = null;
-                    //                    int closestBeforeDays = int.MaxValue;
-                    //                    int closestAfterDays = int.MaxValue;
-
-                    //                    // 1. 앞쪽 31일 이내 가장 가까운 유효값 찾기
-                    //                    for (int j = i - 1; j >= 0; j--)
-                    //                    {
-                    //                        DateTime prevDate = DateTime.ParseExact(groupedData[j].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    //                        int diffDays = (currentDate - prevDate).Days;
-
-                    //                        if (diffDays > 31) break; // 31일 초과 시 검색 중단
-
-                    //                        if (!string.IsNullOrEmpty(groupedData[j].Rsrt) && groupedData[j].Rsrt != "0")
-                    //                        {
-                    //                            if (diffDays < closestBeforeDays)
-                    //                            {
-                    //                                closestBeforeRsrt = groupedData[j].Rsrt;
-                    //                                closestBeforeDays = diffDays;
-                    //                            }
-                    //                        }
-                    //                    }
-
-                    //                    // 2. 뒤쪽 31일 이내 가장 가까운 유효값 찾기
-                    //                    for (int j = i + 1; j < groupedData.Count; j++)
-                    //                    {
-                    //                        DateTime nextDate = DateTime.ParseExact(groupedData[j].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    //                        int diffDays = (nextDate - currentDate).Days;
-
-                    //                        if (diffDays > 31) break; // 31일 초과 시 검색 중단
-
-                    //                        if (!string.IsNullOrEmpty(groupedData[j].Rsrt) && groupedData[j].Rsrt != "0")
-                    //                        {
-                    //                            if (diffDays < closestAfterDays)
-                    //                            {
-                    //                                closestAfterRsrt = groupedData[j].Rsrt;
-                    //                                closestAfterDays = diffDays;
-                    //                            }
-                    //                        }
-                    //                    }
-
-                    //                    // 3. 보정 적용
-                    //                    if (closestBeforeRsrt != null && closestAfterRsrt != null)
-                    //                    {
-                    //                        data.Rsrt = ((Convert.ToDouble(closestBeforeRsrt) + Convert.ToDouble(closestAfterRsrt)) / 2).ToString("F2");
-                    //                        string logMessage = $"Date: {sgg_cd}_{obs_cd}_{data.Date}의 데이터를 " +
-                    //                                           $"{closestBeforeDays}일 전({closestBeforeRsrt})과 " +
-                    //                                           $"{closestAfterDays}일 후({closestAfterRsrt}) 값으로 보정";
-                    //                        correctionLogs.AddOrUpdate(obs_cd, new List<string> { logMessage },
-                    //                            (key, list) => { list.Add(logMessage); return list; });
-                    //                    }
-                    //                }
-                    //            }
-
-
-                    // d-1 값 찾기
-                    //    if (i > 0)
-                    //    {
-                    //        DateTime previousDate = DateTime.ParseExact(groupedData[i - 1].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    //        DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    //        if ((currentDate - previousDate).TotalDays == 1)
-                    //        {
-                    //            dMinus1Rsrt = groupedData[i - 1].Rsrt;
-                    //        }
-                    //    }
-
-                    //    // d+1 값 찾기
-                    //    if (i < groupedData.Count - 1)
-                    //    {
-                    //        DateTime nextDate = DateTime.ParseExact(groupedData[i + 1].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    //        DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    //        if ((nextDate - currentDate).TotalDays == 1)
-                    //        {
-                    //            dPlus1Rsrt = groupedData[i + 1].Rsrt;
-                    //        }
-                    //    }
-
-                    //    if (dMinus1Rsrt != null && dPlus1Rsrt != null)
-                    //    {
-                    //        data.Rsrt = ((Convert.ToDouble(dMinus1Rsrt) + Convert.ToDouble(dPlus1Rsrt)) / 2).ToString("F2");
-                    //        string logMessage = $"Date: {sgg_cd}_{obs_cd}_{data.Date}의 데이터를 보간법으로 보정했습니다.";
-                    //        correctionLogs.AddOrUpdate(obs_cd, new List<string> { logMessage }, (key, list) => { list.Add(logMessage); return list; });
-                    //    }
-                    //    else
-                    //    {
-                    //        continue;
-                    //    }
-                    //}
-
-                    //                string yyyy = data.Date.Substring(0, 4);
-                    //            string mm = data.Date.Substring(4, 2);
-                    //            string dd = data.Date.Substring(6, 2);
-                    //            DateTime date = new DateTime(Convert.ToInt32(yyyy), Convert.ToInt32(mm), Convert.ToInt32(dd));
-                    //            int jd = CalculateJulianDay(date);
-                    //            writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Rsrt}");
-                    //        }
-                    //    }
-                    //}
 
                     // 연속된 기간을 묶어서 알림을 띄우기
                     var errorDates = groupedData
@@ -814,43 +861,6 @@ namespace JS_DAMRSRT
                                     }
                                 }
                             }
-                                //    string dMinus1Rsrt = null;
-                                //    string dPlus1Rsrt = null;
-
-                                //    if (i > 0)
-                                //    {
-                                //        DateTime previousDate = DateTime.ParseExact(groupedData[i - 1].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                                //        DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                                //        if ((currentDate - previousDate).TotalDays == 1)
-                                //        {
-                                //            dMinus1Rsrt = groupedData[i - 1].Rsrt;
-                                //        }
-                                //    }
-
-                                //    if (i < groupedData.Count - 1)
-                                //    {
-                                //        DateTime nextDate = DateTime.ParseExact(groupedData[i + 1].Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                                //        DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                                //        if ((nextDate - currentDate).TotalDays == 1)
-                                //        {
-                                //            dPlus1Rsrt = groupedData[i + 1].Rsrt;
-                                //        }
-                                //    }
-
-                                //    if (dMinus1Rsrt != null && dPlus1Rsrt != null)
-                                //    {
-                                //        data.Rsrt = ((Convert.ToDouble(dMinus1Rsrt) + Convert.ToDouble(dPlus1Rsrt)) / 2).ToString("F2");
-                                //        string logMessage = $"Date: {sgg_cd}_{obs_cd}_{data.Date}의 데이터를 보간법으로 보정했습니다.";
-                                //        correctionLogs.AddOrUpdate(sgg_cd, new List<string> { logMessage }, (key, list) => { list.Add(logMessage); return list; });
-                                //    }
-                                //    else
-                                //    {
-                                //        string logMessage = $"Date: {sgg_cd}_{data.Date}의 데이터를 보정할 수 없습니다.";
-                                //        correctionLogs.AddOrUpdate(sgg_cd, new List<string> { logMessage }, (key, list) => { list.Add(logMessage); return list; });
-                                //        continue;
-                                //    }
-                                //}
-
                                 string yyyy = data.Date.Substring(0, 4);
                             string mm = data.Date.Substring(4, 2);
                             string dd = data.Date.Substring(6, 2);
@@ -859,7 +869,8 @@ namespace JS_DAMRSRT
                             writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Rsrt}");
                         }
                     }
-
+                    //     SaveToDroughtTable("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
+                    SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
                     WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다.");
                 }
             }
@@ -998,7 +1009,8 @@ namespace JS_DAMRSRT
                             writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Flow}");
                         }
                     }
-
+                    //     SaveToDroughtTable("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
+                    SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd,File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
                     WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다.");
                 }
             }
@@ -1147,6 +1159,8 @@ namespace JS_DAMRSRT
                                     await writer.WriteLineAsync(line);
                                 }
                             }
+                            //  SaveToDroughtTable("tb_Actualdrought_AG", fac_code, dataLines, strConn);
+                            SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", fac_code, dataLines, strConn);
 
                             if (!jdConsistency || !has365Days)
                             {
@@ -1166,6 +1180,53 @@ namespace JS_DAMRSRT
                 LogErrorToFile(ex);
             }
         }
+
+        private void SaveToDroughtTableWithCopy(string tableName, string sgg_cd, List<string> lines, string strConn)
+        {
+            using (var conn = new NpgsqlConnection(strConn))
+            {
+                conn.Open();
+                using (var tx = conn.BeginTransaction())
+                {
+                    // 1) 동일 sgg_cd 레코드 일괄 삭제
+                    using (var del = new NpgsqlCommand(
+                        $@"DELETE FROM drought.""{tableName}"" WHERE sgg_cd = @sgg_cd;", conn, tx))
+                    {
+                        del.Parameters.AddWithValue("@sgg_cd", sgg_cd);
+                        del.ExecuteNonQuery();
+                    }
+
+                    // 2) COPY FROM STDIN (binary) 준비
+                    using (var importer = conn.BeginBinaryImport(
+                        $@"COPY drought.""{tableName}"" (sgg_cd, yyyy, mm, dd, jd, data) 
+                   FROM STDIN (FORMAT BINARY)"))
+                    {
+                        foreach (var line in lines)
+                        {
+                            var p = line.Split(',');
+                            if (p.Length < 5) continue;
+                            string data = p[4];
+                            if (string.IsNullOrWhiteSpace(data) || data == "0" || data == "-9999")
+                                continue;
+
+                            importer.StartRow();
+                            importer.Write(sgg_cd, NpgsqlTypes.NpgsqlDbType.Varchar);
+                            importer.Write(int.Parse(p[0]), NpgsqlTypes.NpgsqlDbType.Integer);
+                            importer.Write(int.Parse(p[1]), NpgsqlTypes.NpgsqlDbType.Integer);
+                            importer.Write(int.Parse(p[2]), NpgsqlTypes.NpgsqlDbType.Integer);
+                            importer.Write(int.Parse(p[3]), NpgsqlTypes.NpgsqlDbType.Integer);
+                            importer.Write(double.Parse(data), NpgsqlTypes.NpgsqlDbType.Double);
+                        }
+                        importer.Complete();
+                    }
+
+                    tx.Commit();
+                }
+            }
+        }
+
+
+
 
         private void LogErrorToFile(Exception ex)
         {
@@ -1248,6 +1309,16 @@ namespace JS_DAMRSRT
             }
             return dayOfYear;
         }
+
+        //private int CalculateJulianDay_ARE(DateTime date)
+        //{
+        //    int dayOfYear = date.DayOfYear;
+        //    if (DateTime.IsLeapYear(date.Year) && date.Month > 2)
+        //    {
+        //        dayOfYear--; // 윤년인 경우 2월 29일 이후의 날짜에 대해 JD 값을 조정
+        //    }
+        //    return dayOfYear;
+        //}
         private void WriteStatus(string message)
         {
             if (InvokeRequired)
