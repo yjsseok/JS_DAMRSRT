@@ -15,10 +15,8 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Collections.Concurrent;
 using System.Threading;
-
-using Npgsql;
-
 using log4net;
+using Npgsql;
 using log4net.Config;
 using System.Xml;
 using DevExpress.XtraEditors.Filtering.Templates;
@@ -27,6 +25,11 @@ namespace JS_DAMRSRT
 {
     public partial class MainFrm : Form
     {
+        private System.Windows.Forms.Timer allProcessTimer;
+        private bool isProcessing = false;
+        private readonly string processLogDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ProcessLog");
+
+
         public MainFrm()
         {
             InitializeComponent();
@@ -49,21 +52,24 @@ namespace JS_DAMRSRT
             public string Date { get; set; }
             public string Rsrt { get; set; }
         }
-
-        private void Btn_ProcessAreaRainfall_CSV_Click(object sender, EventArgs e)
+        /////////////////////////////////////////////////////////////////////////////
+        /////////////////////////////////////////////////////////////////////////////
+        private async void Btn_Load_AreaRainfall_Click(object sender, EventArgs e)
         {
-            ProcessAreaRainfall_csv();
+            await Load_AreaRainfall();
         }
-        private void ProcessAreaRainfall_csv()
+        private async Task Load_AreaRainfall()
         {
-            // string queryDtData = "SELECT tm, stn, rn_day FROM tb_kma_asos_dtdata WHERE tm BETWEEN '19890101' AND '20250401'";
-            string queryDtData = "SELECT tm, stn, rn_day FROM tb_kma_asos_dtdata WHERE tm BETWEEN '19890101' AND '20251231'";
-            string queryThiessen = "SELECT sgg_cd, code, ratio FROM tb_kma_asos_thiessen";
-            string strConn = String.Format("Server={0};Port={1};User Id={2};Password={3};Database={4};Search Path={5};",
-                    Config.dbIP, Config.dbPort, Config.dbId, Config.dbPassword, Config.dbName, Config.dbSchema);
+            string endDate = DateTime.Now.Year.ToString() + "1231";
+            string queryDtData = $"SELECT tm, stn, rn_day FROM tb_kma_asos_dtdata WHERE tm BETWEEN '19890101' AND '{endDate}'";
 
+            string queryThiessen = "SELECT sgg_cd, code, ratio FROM tb_kma_asos_thiessen";
+            string strConn = $"Server={Config.dbIP};Port={Config.dbPort};User Id={Config.dbId};Password={Config.dbPassword};Database={Config.dbName};Search Path={Config.dbSchema};";
             DataTable dtData = new DataTable();
             DataTable dtThiessen = new DataTable();
+
+            var stopwatch = new Stopwatch(); //
+            stopwatch.Start();
 
             using (NpgsqlConnection conn = new NpgsqlConnection(strConn))
             {
@@ -97,13 +103,16 @@ namespace JS_DAMRSRT
                 string sgg_cd = sggCdGroup.Key;
                 var thiessenRows = sggCdGroup.ToList();
 
-                tasks.Add(Task.Run(() => ProcessSggCdDataToCsv(sgg_cd, thiessenRows, dtData)));
+                tasks.Add(Task.Run(() => ProcessAreaRainfall(sgg_cd, thiessenRows, dtData)));
             }
 
-            Task.WhenAll(tasks).ContinueWith(t => WriteStatus("면적강우 계산이 완료되었습니다."));
-        }
+            await Task.WhenAll(tasks);
 
-        private void ProcessSggCdDataToCsv(string sgg_cd, List<DataRow> thiessenRows, DataTable dtData)
+            stopwatch.Stop();
+            WriteStatus("면적강우 계산이 완료되었습니다.");
+            WriteStatus($"총 처리 시간: {stopwatch.Elapsed.TotalSeconds:F2}초");
+        }
+        private void ProcessAreaRainfall(string sgg_cd, List<DataRow> thiessenRows, DataTable dtData)
         {
             Dictionary<string, Dictionary<string, decimal>> areaRainfall = new Dictionary<string, Dictionary<string, decimal>>();
             Dictionary<string, Dictionary<string, decimal>> stnRainfall = new Dictionary<string, Dictionary<string, decimal>>();
@@ -209,126 +218,24 @@ namespace JS_DAMRSRT
 
             WriteStatus($"{sgg_cd}.csv 파일 생성 완료 - 행 수: {rowCount}");
         }
-
-
-
-
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        private void Btn_Check_code(object sender, EventArgs e)
-        {
-            Check_code();
-        }
-        private void Check_code()
-        {
-            string strConn = GetConnectionString();
-
-            using (var conn = new NpgsqlConnection(strConn))
-            {
-                conn.Open();
-
-                string selectQuery = "SELECT sort, sgg_cd, obsnm FROM drought_code WHERE obs_cd IS NULL OR obs_cd = ''";
-                using (var selectCmd = new NpgsqlCommand(selectQuery, conn))
-                using (var reader = selectCmd.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        string sort = reader["sort"].ToString();
-                        string sgg_cd = reader["sgg_cd"].ToString();
-                        string obsnm = reader["obsnm"].ToString();
-
-                        string checkQuery = GetCheckQuery(sort);
-                        if (string.IsNullOrEmpty(checkQuery))
-                        {
-                            HandleInvalidSort(sort, obsnm);
-                            continue;
-                        }
-
-                        // 각 명령에 대해 별도의 연결을 사용
-                        using (var innerConn = new NpgsqlConnection(strConn))
-                        {
-                            innerConn.Open();
-                            UpdateObsCd(innerConn, checkQuery, sgg_cd, obsnm);
-                        }
-                    }
-                }
-            }
-        }
-
-        private string GetCheckQuery(string sort)
-        {
-            switch (sort)
-            {
-                case "Dam":
-                    return "SELECT damcd FROM tb_wamis_mndammain WHERE damnm = @obsnm";
-                case "FR":
-                    return "SELECT obscd FROM tb_wkw_flw_obs WHERE obsnm = @obsnm";
-                case "AR":
-                    MessageBox.Show("저수지 코드를 입력해야합니다", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return string.Empty;
-                default:
-                    MessageBox.Show("유효하지 않은 sort입니다", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return string.Empty;
-            }
-        }
-
-        private void HandleInvalidSort(string sort, string obsnm)
-        {
-            WriteStatus($"obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다. 유효하지 않은 sort입니다.");
-        }
-
-        private void UpdateObsCd(NpgsqlConnection conn, string checkQuery, string sgg_cd, string obsnm)
-        {
-            using (var checkCmd = new NpgsqlCommand(checkQuery, conn))
-            {
-                checkCmd.Parameters.AddWithValue("@obsnm", obsnm);
-                var codes = new List<string>();
-
-                using (var checkReader = checkCmd.ExecuteReader())
-                {
-                    while (checkReader.Read())
-                    {
-                        codes.Add(checkReader[0].ToString());
-                    }
-                }
-
-                if (codes.Count > 0)
-                {
-                    string combinedCode = string.Join("_", codes);
-                    string updateQuery = "UPDATE drought_code SET obs_cd = @combinedCode WHERE sgg_cd = @sgg_cd AND obsnm = @obsnm";
-
-                    using (var updateCmd = new NpgsqlCommand(updateQuery, conn))
-                    {
-                        updateCmd.Parameters.AddWithValue("@combinedCode", combinedCode);
-                        updateCmd.Parameters.AddWithValue("@sgg_cd", int.Parse(sgg_cd)); // sgg_cd를 integer로 변환
-                        updateCmd.Parameters.AddWithValue("@obsnm", obsnm);
-
-                        int rowsAffected = updateCmd.ExecuteNonQuery();
-                        if (rowsAffected > 0)
-                        { 
-                            WriteStatus($"sgg_cd: {sgg_cd}, obsnm: {obsnm}의 obs_cd가 업데이트되었습니다.");
-                        }
-                        else
-                        {
-                            WriteStatus($"sgg_cd: {sgg_cd}, obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다.");
-                        }
-                    }
-                }
-                else
-                {
-                    WriteStatus($"obnm: {obsnm}에 대한 코드 값이 존재하지 않습니다.");
-                }
-            }
-        }
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+        /////////////////////////////////////////////////////////////////////////////
+        /////////////////////////////////////////////////////////////////////////////        
 
         /////////////////////////////////////////////////////////////////////////////
-        private void Btn_Load_Dam_Click(object sender, EventArgs e)
+        /////////////////////////////////////////////////////////////////////////////
+        private async void Btn_Load_Dam_Click(object sender, EventArgs e)
         {
-            Load_Dam();
+            await Load_Dam();
         }
-        private void Load_Dam()
+        private async Task Load_Dam()
         {
+            //1. 댐데이터 수집
+
+
+            //2. 러라이너ㅣ란ㅇ
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
+
             string strConn = GetConnectionString();
 
             try
@@ -341,6 +248,7 @@ namespace JS_DAMRSRT
                     using (var selectCmd = new NpgsqlCommand(selectQuery, conn))
                     using (var reader = selectCmd.ExecuteReader())
                     {
+                        //
                         var scheduler = new LimitedConcurrencyLevelTaskScheduler(Environment.ProcessorCount);
                         var factory = new TaskFactory(scheduler);
                         List<Task> tasks = new List<Task>();
@@ -374,40 +282,34 @@ namespace JS_DAMRSRT
                             tasks.Add(factory.StartNew(() => ProcessSggCds(sgg_cds, obs_cd, strConn, correctionLogs, sggCdLogs)));
                         }
 
-                        Task.WhenAll(tasks).ContinueWith(t =>
-                        {
-                            //var groupedLogs = correctionLogs
-                            //    .GroupBy(log => log.Key)
-                            //    .Select(g => new
-                            //    {
-                            //        ObsCd = g.Key,
-                            //        SggCds = string.Join(",", sggCdLogs[g.Key].Distinct()),
-                            //        Messages = g.SelectMany(log => log.Value).Distinct().ToList()
-                            //    });
-                            var groupedLogs = correctionLogs
-    .GroupBy(log => log.Key)
-    .Select(g => {
-        sggCdLogs.TryGetValue(g.Key, out var sggCdsList);
-        var sggCds = sggCdsList != null ? string.Join(",", sggCdsList.Distinct()) : "";
-        return new
-        {
-            ObsCd = g.Key,
-            SggCds = sggCds,
-            Messages = g.SelectMany(log => log.Value).Distinct().ToList()
-        };
-    });
+                        await Task.WhenAll(tasks);
 
-                            foreach (var log in groupedLogs)
+                        var groupedLogs = correctionLogs
+                            .GroupBy(log => log.Key)
+                            .Select(g =>
                             {
-                                foreach (var message in log.Messages)
+                                sggCdLogs.TryGetValue(g.Key, out var sggCdsList);
+                                var sggCds = sggCdsList != null ? string.Join(",", sggCdsList.Distinct()) : "";
+                                return new
                                 {
-                                    string updatedMessage = message.Replace($"({log.ObsCd})", $"({log.SggCds})");
-                                    WriteStatus(updatedMessage);
-                                }
-                            }
+                                    ObsCd = g.Key,
+                                    SggCds = sggCds,
+                                    Messages = g.SelectMany(log => log.Value).Distinct().ToList()
+                                };
+                            });
 
-                            WriteStatus("모든 작업이 완료되었습니다.");
-                        });
+                        foreach (var log in groupedLogs)
+                        {
+                            foreach (var message in log.Messages)
+                            {
+                                string updatedMessage = message.Replace($"({log.ObsCd})", $"({log.SggCds})");
+                                WriteStatus(updatedMessage);
+                            }
+                        }
+
+                        WriteStatus("모든 작업이 완료되었습니다.");
+                        stopwatch.Stop();
+                        WriteStatus($"총 처리 시간: {stopwatch.Elapsed.TotalSeconds:F2}초");
                     }
                 }
             }
@@ -416,7 +318,6 @@ namespace JS_DAMRSRT
                 WriteStatus($"오류 발생: {ex.Message}");
             }
         }
-
         private void ProcessSggCds(List<string> sgg_cds, string obs_cd, string strConn, ConcurrentDictionary<string, List<string>> correctionLogs, ConcurrentDictionary<string, List<string>> sggCdLogs)
         {
             try
@@ -674,17 +575,19 @@ namespace JS_DAMRSRT
             }
         }
         /////////////////////////////////////////////////////////////////////////////
+        /////////////////////////////////////////////////////////////////////////////
 
-
-
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        private void Btn_Load_AR_Click(object sender, EventArgs e)
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        private async void Btn_Load_AR_Click(object sender, EventArgs e)
         {
-            Load_ARdam();
+            await Load_ARdam();
         }
-
-        private void Load_ARdam()
+        private async Task Load_ARdam()
         {
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
+
             string strConn = GetConnectionString();
 
             try
@@ -715,18 +618,20 @@ namespace JS_DAMRSRT
                             tasks.Add(factory.StartNew(() => ProcessARdam(sgg_cd, obs_cd, strConn, correctionLogs)));
                         }
 
-                        Task.WhenAll(tasks).ContinueWith(t =>
+                        await Task.WhenAll(tasks);
+
+                        foreach (var log in correctionLogs)
                         {
-                            foreach (var log in correctionLogs)
+                            WriteStatus($"sgg_cd: {log.Key}의 보정된 데이터:");
+                            foreach (var message in log.Value)
                             {
-                                WriteStatus($"sgg_cd: {log.Key}의 보정된 데이터:");
-                                foreach (var message in log.Value)
-                                {
-                                    WriteStatus(message);
-                                }
+                                WriteStatus(message);
                             }
-                            WriteStatus("모든 작업이 완료되었습니다.");
-                        });
+                        }
+
+                        WriteStatus("모든 작업이 완료되었습니다.");
+                        stopwatch.Stop();
+                        WriteStatus($"총 처리 시간: {stopwatch.Elapsed.TotalSeconds:F2}초");
                     }
                 }
             }
@@ -735,7 +640,6 @@ namespace JS_DAMRSRT
                 WriteStatus($"오류 발생: {ex.Message}");
             }
         }
-
         private void ProcessARdam(string sgg_cd, string obs_cd, string strConn, ConcurrentDictionary<string, List<string>> correctionLogs)
         {
             try
@@ -869,7 +773,7 @@ namespace JS_DAMRSRT
                             writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Rsrt}");
                         }
                     }
-                    //     SaveToDroughtTable("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
+                 //  SaveToDroughtTable("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
                     SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
                     WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다.");
                 }
@@ -880,19 +784,21 @@ namespace JS_DAMRSRT
             } 
         }
 
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-
-
+        //////////////////////////////////////////////////////////////////////////////
         /////////////////////////////////////////////////////////////////////////////
-        private void Btn_Load_FR_Click(object sender, EventArgs e)
+        private async void Btn_Load_FR_Click(object sender, EventArgs e)
         {
-            Load_FlowRate();
+            await Load_FlowRate();
         }
 
-        private void Load_FlowRate()
+        private async Task Load_FlowRate()
         {
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
             string strConn = GetConnectionString();
 
             try
@@ -922,10 +828,11 @@ namespace JS_DAMRSRT
                             tasks.Add(factory.StartNew(() => ProcessFlowRate(sgg_cd, obs_cd, strConn)));
                         }
 
-                        Task.WhenAll(tasks).ContinueWith(t =>
-                        {
-                            WriteStatus("모든 작업이 완료되었습니다.");
-                        });
+                        await Task.WhenAll(tasks);
+
+                        WriteStatus("모든 작업이 완료되었습니다.");
+                        stopwatch.Stop();
+                        WriteStatus($"총 처리 시간: {stopwatch.Elapsed.TotalSeconds:F2}초");
                     }
                 }
             }
@@ -1020,13 +927,13 @@ namespace JS_DAMRSRT
             }
         }
         //////////////////////////////////////////////////////////////////////////////
-
-        private void Btn_Ag_csv_Click(object sender, EventArgs e)
+        //////////////////////////////////////////////////////////////////////////////
+        private void Btn_Load_Ag_Click(object sender, EventArgs e)
         {
-            ProcessAGcsv();
+            Load_AG();
         }
 
-        private async void ProcessAGcsv()
+        private async void Load_AG()
         {
             string strConn = GetConnectionString();
             int maxDegreeOfParallelism = 50; // 동시 작업 수 제한
@@ -1058,7 +965,7 @@ namespace JS_DAMRSRT
                             {
                                 try
                                 {
-                                    await ProcessFacCodeData(fac_code, strConn);
+                                    await Procsee_AG(fac_code, strConn);
                                 }
                                 finally
                                 {
@@ -1078,7 +985,7 @@ namespace JS_DAMRSRT
             }
         }
 
-        private async Task ProcessFacCodeData(string fac_code, string strConn)
+        private async Task Procsee_AG(string fac_code, string strConn)
         {
             try
             {
@@ -1198,8 +1105,7 @@ namespace JS_DAMRSRT
 
                     // 2) COPY FROM STDIN (binary) 준비
                     using (var importer = conn.BeginBinaryImport(
-                        $@"COPY drought.""{tableName}"" (sgg_cd, yyyy, mm, dd, jd, data) 
-                   FROM STDIN (FORMAT BINARY)"))
+                        $@"COPY drought.""{tableName}"" (sgg_cd, yyyy, mm, dd, jd, data) FROM STDIN (FORMAT BINARY)"))
                     {
                         foreach (var line in lines)
                         {
@@ -1224,9 +1130,122 @@ namespace JS_DAMRSRT
                 }
             }
         }
+        //////////////////////////////////////////////////////////////////////////////
+        //////////////////////////////////////////////////////////////////////////////
 
 
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        //private void Btn_Check_code(object sender, EventArgs e)
+        //{
+        //    Check_code();
+        //}
+        //private void Check_code()
+        //{
+        //    string strConn = GetConnectionString();
+
+        //    using (var conn = new NpgsqlConnection(strConn))
+        //    {
+        //        conn.Open();
+
+        //        string selectQuery = "SELECT sort, sgg_cd, obsnm FROM drought_code WHERE obs_cd IS NULL OR obs_cd = ''";
+        //        using (var selectCmd = new NpgsqlCommand(selectQuery, conn))
+        //        using (var reader = selectCmd.ExecuteReader())
+        //        {
+        //            while (reader.Read())
+        //            {
+        //                string sort = reader["sort"].ToString();
+        //                string sgg_cd = reader["sgg_cd"].ToString();
+        //                string obsnm = reader["obsnm"].ToString();
+
+        //                string checkQuery = GetCheckQuery(sort);
+        //                if (string.IsNullOrEmpty(checkQuery))
+        //                {
+        //                    HandleInvalidSort(sort, obsnm);
+        //                    continue;
+        //                }
+
+        //                // 각 명령에 대해 별도의 연결을 사용
+        //                using (var innerConn = new NpgsqlConnection(strConn))
+        //                {
+        //                    innerConn.Open();
+        //                    UpdateObsCd(innerConn, checkQuery, sgg_cd, obsnm);
+        //                }
+        //            }
+        //        }
+        //    }
+        //}
+
+        //private string GetCheckQuery(string sort)
+        //{
+        //    switch (sort)
+        //    {
+        //        case "Dam":
+        //            return "SELECT damcd FROM tb_wamis_mndammain WHERE damnm = @obsnm";
+        //        case "FR":
+        //            return "SELECT obscd FROM tb_wkw_flw_obs WHERE obsnm = @obsnm";
+        //        case "AR":
+        //            MessageBox.Show("저수지 코드를 입력해야합니다", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        //            return string.Empty;
+        //        default:
+        //            MessageBox.Show("유효하지 않은 sort입니다", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        //            return string.Empty;
+        //    }
+        //}
+
+        //private void HandleInvalidSort(string sort, string obsnm)
+        //{
+        //    WriteStatus($"obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다. 유효하지 않은 sort입니다.");
+        //}
+
+        //private void UpdateObsCd(NpgsqlConnection conn, string checkQuery, string sgg_cd, string obsnm)
+        //{
+        //    using (var checkCmd = new NpgsqlCommand(checkQuery, conn))
+        //    {
+        //        checkCmd.Parameters.AddWithValue("@obsnm", obsnm);
+        //        var codes = new List<string>();
+
+        //        using (var checkReader = checkCmd.ExecuteReader())
+        //        {
+        //            while (checkReader.Read())
+        //            {
+        //                codes.Add(checkReader[0].ToString());
+        //            }
+        //        }
+
+        //        if (codes.Count > 0)
+        //        {
+        //            string combinedCode = string.Join("_", codes);
+        //            string updateQuery = "UPDATE drought_code SET obs_cd = @combinedCode WHERE sgg_cd = @sgg_cd AND obsnm = @obsnm";
+
+        //            using (var updateCmd = new NpgsqlCommand(updateQuery, conn))
+        //            {
+        //                updateCmd.Parameters.AddWithValue("@combinedCode", combinedCode);
+        //                updateCmd.Parameters.AddWithValue("@sgg_cd", int.Parse(sgg_cd)); // sgg_cd를 integer로 변환
+        //                updateCmd.Parameters.AddWithValue("@obsnm", obsnm);
+
+        //                int rowsAffected = updateCmd.ExecuteNonQuery();
+        //                if (rowsAffected > 0)
+        //                { 
+        //                    WriteStatus($"sgg_cd: {sgg_cd}, obsnm: {obsnm}의 obs_cd가 업데이트되었습니다.");
+        //                }
+        //                else
+        //                {
+        //                    WriteStatus($"sgg_cd: {sgg_cd}, obsnm: {obsnm}의 obs_cd 업데이트에 실패했습니다.");
+        //                }
+        //            }
+        //        }
+        //        else
+        //        {
+        //            WriteStatus($"obnm: {obsnm}에 대한 코드 값이 존재하지 않습니다.");
+        //        }
+        //    }
+        //}
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         private void LogErrorToFile(Exception ex)
         {
@@ -1310,15 +1329,6 @@ namespace JS_DAMRSRT
             return dayOfYear;
         }
 
-        //private int CalculateJulianDay_ARE(DateTime date)
-        //{
-        //    int dayOfYear = date.DayOfYear;
-        //    if (DateTime.IsLeapYear(date.Year) && date.Month > 2)
-        //    {
-        //        dayOfYear--; // 윤년인 경우 2월 29일 이후의 날짜에 대해 JD 값을 조정
-        //    }
-        //    return dayOfYear;
-        //}
         private void WriteStatus(string message)
         {
             if (InvokeRequired)
@@ -2757,6 +2767,11 @@ namespace JS_DAMRSRT
             private int _delegatesQueuedOrRunning = 0; // protected by lock(_tasks)
 
             // Initializes an instance of the LimitedConcurrencyLevelTaskScheduler class with the specified degree of parallelism.
+            /// <summary>
+            /// gfgdfgdggdgdg
+            /// </summary>
+            /// <param name="maxDegreeOfParallelism"></param>
+            /// <exception cref="ArgumentOutOfRangeException"></exception>
             public LimitedConcurrencyLevelTaskScheduler(int maxDegreeOfParallelism)
             {
                 if (maxDegreeOfParallelism < 1) throw new ArgumentOutOfRangeException("maxDegreeOfParallelism");
@@ -2859,6 +2874,235 @@ namespace JS_DAMRSRT
             }
         }
 
+        private void Process_ALL_Click(object sender, EventArgs e)
+        {
+            if (allProcessTimer == null)
+            {
+                allProcessTimer = new System.Windows.Forms.Timer();
+                allProcessTimer.Interval = 60 * 60 * 1000; // 1시간
+                allProcessTimer.Tick += AllProcessTimer_Tick;
+            }
+            allProcessTimer.Start();
+            WriteStatus("전체 자동처리 타이머가 시작되었습니다.");
+            BaysLogManager.WriteEntry("전체 자동처리 타이머가 시작되었습니다.");
+            // 즉시 한 번 실행
+            _ = RunAllProcessAsync();
+        }
+
+        private async void AllProcessTimer_Tick(object sender, EventArgs e)
+        {
+            await RunAllProcessAsync();
+        }
+
+        private async Task RunAllProcessAsync()
+        {
+            if (isProcessing) return; // 중복 실행 방지
+            isProcessing = true;
+
+            try
+            {
+                string today = DateTime.Now.ToString("yyyyMMdd");
+
+                // 1. AreaRainfall
+                if (!IsTodayProcessed("AreaRainfall", today))
+                {
+                    if (IsTodayDataAvailable("tb_kma_asos_dtdata", "tm", today))
+                    {
+                        WriteStatus("AreaRainfall: 오늘 데이터 있음, 실행 시작.");
+                        BaysLogManager.WriteEntry("AreaRainfall: 오늘 데이터 있음, 실행 시작.");
+                        await Load_AreaRainfall();
+                        LogProcess("AreaRainfall", today);
+                    }
+                    else
+                    {
+                        WriteStatus("AreaRainfall: 오늘 데이터 없음. 건너뜀.");
+                        BaysLogManager.WriteEntry("AreaRainfall: 오늘 데이터 없음. 건너뜀.");
+                    }
+                }
+                else
+                {
+                    WriteStatus("AreaRainfall: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                    BaysLogManager.WriteEntry("AreaRainfall: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                }
+
+                // 2. Dam
+                if (!IsTodayProcessed("Dam", today))
+                {
+                    if (IsTodayDataAvailable("tb_wamis_mnhrdata", "obsdh", today))
+                    {
+                        WriteStatus("Dam: 오늘 데이터 있음, 실행 시작.");
+                        BaysLogManager.WriteEntry("Dam: 오늘 데이터 있음, 실행 시작.");
+                        await Load_Dam();
+                        LogProcess("Dam", today);
+                    }
+                    else
+                    {
+                        WriteStatus("Dam: 오늘 데이터 없음. 건너뜀.");
+                        BaysLogManager.WriteEntry("Dam: 오늘 데이터 없음. 건너뜀.");
+                    }
+                }
+                else
+                {
+                    WriteStatus("Dam: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                    BaysLogManager.WriteEntry("Dam: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                }
+
+                // 3. ARdam
+                if (!IsTodayProcessed("ARdam", today))
+                {
+                    if (IsTodayDataAvailable("tb_reserviorlevel", "check_date", today))
+                    {
+                        WriteStatus("ARdam: 오늘 데이터 있음, 실행 시작.");
+                        BaysLogManager.WriteEntry("ARdam: 오늘 데이터 있음, 실행 시작.");
+                        await Load_ARdam();
+                        LogProcess("ARdam", today);
+                    }
+                    else
+                    {
+                        WriteStatus("ARdam: 오늘 데이터 없음. 건너뜀.");
+                        BaysLogManager.WriteEntry("ARdam: 오늘 데이터 없음. 건너뜀.");
+                    }
+                }
+                else
+                {
+                    WriteStatus("ARdam: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                    BaysLogManager.WriteEntry("ARdam: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                }
+
+                // 4. FlowRate
+                if (!IsTodayProcessed("FlowRate", today))
+                {
+                    if (IsTodayDataAvailable("tb_wamis_flowdtdata", "ymd", today))
+                    {
+                        WriteStatus("FlowRate: 오늘 데이터 있음, 실행 시작.");
+                        BaysLogManager.WriteEntry("FlowRate: 오늘 데이터 있음, 실행 시작.");
+                        await Load_FlowRate();
+                        LogProcess("FlowRate", today);
+                    }
+                    else
+                    {
+                        WriteStatus("FlowRate: 오늘 데이터 없음. 건너뜀.");
+                        BaysLogManager.WriteEntry("FlowRate: 오늘 데이터 없음. 건너뜀.");
+                    }
+                }
+                else
+                {
+                    WriteStatus("FlowRate: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                    BaysLogManager.WriteEntry("FlowRate: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                }
+
+                // 5. AG
+                if (!IsTodayProcessed("AG", today))
+                {
+                    if (IsTodayDataAvailable("tb_reserviorlevel", "check_date", today))
+                    {
+                        WriteStatus("AG: 오늘 데이터 있음, 실행 시작.");
+                        BaysLogManager.WriteEntry("AG: 오늘 데이터 있음, 실행 시작.");
+                        await Task.Run(() => Load_AG());
+                        LogProcess("AG", today);
+                    }
+                    else
+                    {
+                        WriteStatus("AG: 오늘 데이터 없음. 건너뜀.");
+                        BaysLogManager.WriteEntry("AG: 오늘 데이터 없음. 건너뜀.");
+                    }
+                }
+                else
+                {
+                    WriteStatus("AG: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                    BaysLogManager.WriteEntry("AG: 오늘 이미 실행됨. 내일 00시에 재시도 예정.");
+                }
+
+                WriteStatus("전체 자동처리 완료.");
+                BaysLogManager.WriteEntry("전체 자동처리 완료.");
+            }
+            catch (Exception ex)
+            {
+                WriteStatus($"전체 자동처리 오류: {ex.Message}");
+                BaysLogManager.WriteEntry($"전체 자동처리 오류: {ex.Message}");
+            }
+            finally
+            {
+                isProcessing = false;
+            }
+        }
+
+        // 오늘 실행 이력 확인 (BaysLogManager 로그 파일에서 확인)
+        private bool IsTodayProcessed(string processName, string today)
+        {
+            try
+            {
+                string logFile = GetProcessLogFilePath(processName, today);
+                if (File.Exists(logFile))
+                {
+                    string content = File.ReadAllText(logFile);
+                    return content.Contains($"{processName}:{today}:done");
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // 오늘 데이터 유무 확인 (DB 쿼리)
+        private bool IsTodayDataAvailable(string tableName, string dateColumn, string today)
+        {
+            try
+            {
+                string strConn = GetConnectionString();
+                using (var conn = new NpgsqlConnection(strConn))
+                {
+                    conn.Open();
+                    string query;
+                    if (dateColumn == "obsdh")
+                        query = $"SELECT 1 FROM {tableName} WHERE LEFT(obsdh, 8) = @today LIMIT 1";
+                    else
+                        query = $"SELECT 1 FROM {tableName} WHERE {dateColumn} = @today LIMIT 1";
+                    using (var cmd = new NpgsqlCommand(query, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@today", today);
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            return reader.Read();
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteStatus($"DB 확인 오류({tableName}): {ex.Message}");
+                BaysLogManager.WriteEntry($"DB 확인 오류({tableName}): {ex.Message}");
+                return false;
+            }
+        }
+
+        // 실행 이력 기록 (BaysLogManager + 별도 파일)
+        private void LogProcess(string processName, string today)
+        {
+            try
+            {
+                if (!Directory.Exists(processLogDir))
+                    Directory.CreateDirectory(processLogDir);
+
+                string logFile = GetProcessLogFilePath(processName, today);
+                string logMsg = $"{processName}:{today}:done";
+                File.WriteAllText(logFile, logMsg);
+                BaysLogManager.WriteEntry($"[{processName}] {today} 처리 완료 이력 기록");
+            }
+            catch (Exception ex)
+            {
+                WriteStatus($"이력 기록 오류: {ex.Message}");
+                BaysLogManager.WriteEntry($"이력 기록 오류: {ex.Message}");
+            }
+        }
+
+        // 이력 파일 경로 생성
+        private string GetProcessLogFilePath(string processName, string today)
+        {
+            return Path.Combine(processLogDir, $"{processName}_{today}.log");
+        }
 
     }
 }

@@ -35,6 +35,8 @@
             this.Btn_Load_AR = new System.Windows.Forms.Button();
             this.Btn_Ag_csv = new System.Windows.Forms.Button();
             this.Btn_ProcessAreaRainfall_CSV = new System.Windows.Forms.Button();
+            this.button1 = new System.Windows.Forms.Button();
+            this.Process_ALL = new System.Windows.Forms.Button();
             this.SuspendLayout();
             // 
             // listStatus
@@ -49,14 +51,10 @@
             // 
             // Btn_code_load
             // 
-            this.Btn_code_load.Location = new System.Drawing.Point(14, 32);
-            this.Btn_code_load.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
+            this.Btn_code_load.Location = new System.Drawing.Point(0, 0);
             this.Btn_code_load.Name = "Btn_code_load";
-            this.Btn_code_load.Size = new System.Drawing.Size(125, 29);
-            this.Btn_code_load.TabIndex = 1;
-            this.Btn_code_load.Text = "코드 불러오기";
-            this.Btn_code_load.UseVisualStyleBackColor = true;
-            this.Btn_code_load.Click += new System.EventHandler(this.Btn_Check_code);
+            this.Btn_code_load.Size = new System.Drawing.Size(75, 23);
+            this.Btn_code_load.TabIndex = 7;
             // 
             // Btn_Load_FR
             // 
@@ -100,7 +98,7 @@
             this.Btn_Ag_csv.TabIndex = 5;
             this.Btn_Ag_csv.Text = "SHSI(A)";
             this.Btn_Ag_csv.UseVisualStyleBackColor = true;
-            this.Btn_Ag_csv.Click += new System.EventHandler(this.Btn_Ag_csv_Click);
+            this.Btn_Ag_csv.Click += new System.EventHandler(this.Btn_Load_Ag_Click);
             // 
             // Btn_ProcessAreaRainfall_CSV
             // 
@@ -110,13 +108,40 @@
             this.Btn_ProcessAreaRainfall_CSV.TabIndex = 6;
             this.Btn_ProcessAreaRainfall_CSV.Text = "SPI";
             this.Btn_ProcessAreaRainfall_CSV.UseVisualStyleBackColor = true;
-            this.Btn_ProcessAreaRainfall_CSV.Click += new System.EventHandler(this.Btn_ProcessAreaRainfall_CSV_Click);
+            this.Btn_ProcessAreaRainfall_CSV.Click += new System.EventHandler(this.Btn_Load_AreaRainfall_Click);
+            // 
+            // button1
+            // 
+            this.button1.Location = new System.Drawing.Point(0, 0);
+            this.button1.Name = "button1";
+            this.button1.Size = new System.Drawing.Size(75, 23);
+            this.button1.TabIndex = 8;
+            this.button1.Text = "button1";
+            this.button1.UseVisualStyleBackColor = true;
+            // 
+            // Process_ALL
+            // 
+            this.Process_ALL.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+            this.Process_ALL.AutoEllipsis = true;
+            this.Process_ALL.AutoSize = true;
+            this.Process_ALL.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.Process_ALL.Location = new System.Drawing.Point(14, 32);
+            this.Process_ALL.Name = "Process_ALL";
+            this.Process_ALL.Size = new System.Drawing.Size(82, 25);
+            this.Process_ALL.TabIndex = 9;
+            this.Process_ALL.Text = "전체 실행";
+            this.Process_ALL.UseVisualStyleBackColor = true;
+            this.Process_ALL.Click += new System.EventHandler(this.Process_ALL_Click);
             // 
             // MainFrm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(8F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(1394, 1266);
+            this.Controls.Add(this.Process_ALL);
+            this.Controls.Add(this.button1);
             this.Controls.Add(this.Btn_ProcessAreaRainfall_CSV);
             this.Controls.Add(this.Btn_Ag_csv);
             this.Controls.Add(this.Btn_Load_AR);
@@ -129,6 +154,7 @@
             this.Text = "MainFrm";
             this.Load += new System.EventHandler(this.MainFrm_Load);
             this.ResumeLayout(false);
+            this.PerformLayout();
 
         }
 
@@ -141,6 +167,8 @@
         private System.Windows.Forms.Button Btn_Load_AR;
         private System.Windows.Forms.Button Btn_Ag_csv;
         private System.Windows.Forms.Button Btn_ProcessAreaRainfall_CSV;
+        private System.Windows.Forms.Button button1;
+        private System.Windows.Forms.Button Process_ALL;
     }
 }
 
