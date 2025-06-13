@@ -1269,8 +1269,7 @@ namespace JS_DAMRSRT
             }
         }
 
-        
-        private async Task ExtendDiscontinuedDataAsync()
+         private async Task ExtendDiscontinuedDataAsync()
         {
             // 1. 지원이 종료된 지역 코드 목록
             var discontinuedCodes = new List<string>
@@ -1364,7 +1363,6 @@ namespace JS_DAMRSRT
                 WriteStatus($"오류 발생: {ex.Message}");
             }
         }
-
 
         //////////////////////////////////////////////////////////////////////////////
         //////////////////////////////////////////////////////////////////////////////
