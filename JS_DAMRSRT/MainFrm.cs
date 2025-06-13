@@ -28,8 +28,12 @@ namespace JS_DAMRSRT
         private System.Windows.Forms.Timer allProcessTimer;
         private bool isProcessing = false;
         private readonly string processLogDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ProcessLog");
-
-
+        private static readonly object _logLock = new object();
+        private class AgricData
+        {
+            public string Date { get; set; }
+            public string Rate { get; set; }
+        }
         public MainFrm()
         {
             InitializeComponent();
@@ -928,12 +932,19 @@ namespace JS_DAMRSRT
         }
         //////////////////////////////////////////////////////////////////////////////
         //////////////////////////////////////////////////////////////////////////////
-        private void Btn_Load_Ag_Click(object sender, EventArgs e)
+        private async void Btn_Load_Ag_Click(object sender, EventArgs e)
         {
-            Load_AG();
+            WriteStatus("SHSI(A) 데이터 생성을 시작합니다...");
+            await Load_AG();
+            WriteStatus("SHSI(A) 데이터 생성이 완료되었습니다.");
+
+            // 2. 지원 종료 지역 데이터 확장 작업 시작 (완료될 때까지 대기)
+            WriteStatus("지원 종료 지역 데이터 확장 작업을 시작합니다...");
+            await ExtendDiscontinuedDataAsync();
+            WriteStatus("데이터 확장 작업이 완료되었습니다.");
         }
 
-        private async void Load_AG()
+        private async Task Load_AG()
         {
             string strConn = GetConnectionString();
             int maxDegreeOfParallelism = 50; // 동시 작업 수 제한
@@ -985,101 +996,228 @@ namespace JS_DAMRSRT
             }
         }
 
+        //private async Task Procsee_AG(string fac_code, string strConn)
+        //{
+        //    try
+        //    {
+        //        using (var conn = new NpgsqlConnection(strConn))
+        //        {
+        //            await conn.OpenAsync();
+
+        //       //     string dataQuery = "SELECT fac_code, fac_name, county, check_date, rate, water_level FROM tb_reserviorlevel WHERE fac_code = @fac_code";
+        //            string dataQuery = "SELECT fac_code, check_date, rate FROM tb_reserviorlevel WHERE fac_code = @fac_code";
+        //            using (var dataCmd = new NpgsqlCommand(dataQuery, conn))
+        //            {
+        //                dataCmd.Parameters.AddWithValue("@fac_code", fac_code);
+        //                using (var dataReader = await dataCmd.ExecuteReaderAsync())
+        //                {
+        //                    var dataLines = new List<string>();
+
+        //                    while (await dataReader.ReadAsync())
+        //                    {
+        //              //          string fac_name = dataReader["fac_name"].ToString();
+        //              //          string county = dataReader["county"].ToString();
+        //                        string check_date = dataReader["check_date"].ToString();
+        //                        string rate = dataReader["rate"].ToString();
+        //              //          string water_level = dataReader["water_level"].ToString();
+
+        //                        string yyyy = check_date.Substring(0, 4);
+        //                        string mm = check_date.Substring(4, 2);
+        //                        string dd = check_date.Substring(6, 2);
+        //                        DateTime date = new DateTime(Convert.ToInt32(yyyy), Convert.ToInt32(mm), Convert.ToInt32(dd));
+        //                        int jd = CalculateJulianDay(date);
+
+        //                        string dataLine = $"{yyyy},{mm},{dd},{jd},{rate}";
+        //                        //  string dataLine = $"{yyyy},{mm},{dd},{jd},{rate},{water_level},{fac_name},{county}";
+        //                        dataLines.Add(dataLine);
+        //                    }
+
+        //                    // 날짜 오름차순으로 정렬
+        //                    dataLines = dataLines.OrderBy(line => DateTime.ParseExact(line.Split(',')[0] + line.Split(',')[1] + line.Split(',')[2], "yyyyMMdd", CultureInfo.InvariantCulture)).ToList();
+
+        //                    // 2월 29일 제거
+        //                    dataLines = dataLines.Where(line =>
+        //                    {
+        //                        var parts = line.Split(',');
+        //                        DateTime date = new DateTime(Convert.ToInt32(parts[0]), Convert.ToInt32(parts[1]), Convert.ToInt32(parts[2]));
+        //                        return !(date.Month == 2 && date.Day == 29);
+        //                    }).ToList();
+
+        //                    // JD와 날짜 일관성 확인
+        //                    bool jdConsistency = true;
+        //                    int expectedJD = 1;
+        //                    for (int i = 0; i < dataLines.Count; i++)
+        //                    {
+        //                        var parts = dataLines[i].Split(',');
+        //                        int jd = Convert.ToInt32(parts[3]);
+        //                        if (jd != expectedJD)
+        //                        {
+        //                            jdConsistency = false;
+        //                            break;
+        //                        }
+        //                        expectedJD++;
+        //                    }
+
+        //                    // 1년 데이터에 365개의 데이터가 있는지 확인
+        //                    bool has365Days = dataLines.Count == 365;
+
+        //                    string directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AgAG");
+        //                    if (!Directory.Exists(directoryPath))
+        //                    {
+        //                        Directory.CreateDirectory(directoryPath);
+        //                    }
+
+        //                    string filePath = Path.Combine(directoryPath, $"{fac_code}.csv");
+        //                    using (var writer = new StreamWriter(filePath))
+        //                    {
+        //                        //await writer.WriteLineAsync("yyyy,mm,dd,JD,rate,waterlevel,fac_name,county");
+        //                        await writer.WriteLineAsync("yyyy,mm,dd,JD,rate");
+        //                        foreach (var line in dataLines)
+        //                        {
+        //                            await writer.WriteLineAsync(line);
+        //                        }
+        //                    }
+        //                    //  SaveToDroughtTable("tb_Actualdrought_AG", fac_code, dataLines, strConn);
+        //                    SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", fac_code, dataLines, strConn);
+
+        //                    if (!jdConsistency || !has365Days)
+        //                    {
+        //                        WriteStatus($"fac_code: {fac_code}의 CSV 파일이 생성되었습니다. JD 이상 있음.");
+        //                    }
+        //                    else
+        //                    {
+        //                        WriteStatus($"fac_code: {fac_code}의 CSV 파일이 생성되었습니다.");
+        //                    }
+        //                }
+        //            }
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        WriteStatus($"fac_code: {fac_code} 처리 중 오류 발생: {ex.Message}");
+        //        LogErrorToFile(ex);
+        //    }
+        //}
         private async Task Procsee_AG(string fac_code, string strConn)
         {
             try
             {
+                var rawData = new List<AgricData>();
+
                 using (var conn = new NpgsqlConnection(strConn))
                 {
                     await conn.OpenAsync();
-
-               //     string dataQuery = "SELECT fac_code, fac_name, county, check_date, rate, water_level FROM tb_reserviorlevel WHERE fac_code = @fac_code";
-                    string dataQuery = "SELECT fac_code, check_date, rate FROM tb_reserviorlevel WHERE fac_code = @fac_code";
+                    string dataQuery = "SELECT check_date, rate FROM tb_reserviorlevel WHERE fac_code = @fac_code";
                     using (var dataCmd = new NpgsqlCommand(dataQuery, conn))
                     {
                         dataCmd.Parameters.AddWithValue("@fac_code", fac_code);
                         using (var dataReader = await dataCmd.ExecuteReaderAsync())
                         {
-                            var dataLines = new List<string>();
-
                             while (await dataReader.ReadAsync())
                             {
-                      //          string fac_name = dataReader["fac_name"].ToString();
-                      //          string county = dataReader["county"].ToString();
                                 string check_date = dataReader["check_date"].ToString();
                                 string rate = dataReader["rate"].ToString();
-                      //          string water_level = dataReader["water_level"].ToString();
 
-                                string yyyy = check_date.Substring(0, 4);
-                                string mm = check_date.Substring(4, 2);
-                                string dd = check_date.Substring(6, 2);
-                                DateTime date = new DateTime(Convert.ToInt32(yyyy), Convert.ToInt32(mm), Convert.ToInt32(dd));
-                                int jd = CalculateJulianDay(date);
-
-                                string dataLine = $"{yyyy},{mm},{dd},{jd},{rate}";
-                                //  string dataLine = $"{yyyy},{mm},{dd},{jd},{rate},{water_level},{fac_name},{county}";
-                                dataLines.Add(dataLine);
-                            }
-
-                            // 날짜 오름차순으로 정렬
-                            dataLines = dataLines.OrderBy(line => DateTime.ParseExact(line.Split(',')[0] + line.Split(',')[1] + line.Split(',')[2], "yyyyMMdd", CultureInfo.InvariantCulture)).ToList();
-
-                            // 2월 29일 제거
-                            dataLines = dataLines.Where(line =>
-                            {
-                                var parts = line.Split(',');
-                                DateTime date = new DateTime(Convert.ToInt32(parts[0]), Convert.ToInt32(parts[1]), Convert.ToInt32(parts[2]));
-                                return !(date.Month == 2 && date.Day == 29);
-                            }).ToList();
-
-                            // JD와 날짜 일관성 확인
-                            bool jdConsistency = true;
-                            int expectedJD = 1;
-                            for (int i = 0; i < dataLines.Count; i++)
-                            {
-                                var parts = dataLines[i].Split(',');
-                                int jd = Convert.ToInt32(parts[3]);
-                                if (jd != expectedJD)
+                                if (rate != "-9999")
                                 {
-                                    jdConsistency = false;
-                                    break;
+                                    rawData.Add(new AgricData { Date = check_date, Rate = rate });
                                 }
-                                expectedJD++;
-                            }
-
-                            // 1년 데이터에 365개의 데이터가 있는지 확인
-                            bool has365Days = dataLines.Count == 365;
-
-                            string directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AgAG");
-                            if (!Directory.Exists(directoryPath))
-                            {
-                                Directory.CreateDirectory(directoryPath);
-                            }
-
-                            string filePath = Path.Combine(directoryPath, $"{fac_code}.csv");
-                            using (var writer = new StreamWriter(filePath))
-                            {
-                                //await writer.WriteLineAsync("yyyy,mm,dd,JD,rate,waterlevel,fac_name,county");
-                                await writer.WriteLineAsync("yyyy,mm,dd,JD,rate");
-                                foreach (var line in dataLines)
-                                {
-                                    await writer.WriteLineAsync(line);
-                                }
-                            }
-                            //  SaveToDroughtTable("tb_Actualdrought_AG", fac_code, dataLines, strConn);
-                            SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", fac_code, dataLines, strConn);
-
-                            if (!jdConsistency || !has365Days)
-                            {
-                                WriteStatus($"fac_code: {fac_code}의 CSV 파일이 생성되었습니다. JD 이상 있음.");
-                            }
-                            else
-                            {
-                                WriteStatus($"fac_code: {fac_code}의 CSV 파일이 생성되었습니다.");
                             }
                         }
                     }
                 }
+
+                rawData = rawData.OrderBy(d => d.Date).ToList();
+
+                if (rawData.Count == 0)
+                {
+                    WriteStatus($"fac_code: {fac_code}에 대한 유효한 데이터가 없어 처리를 중단합니다.");
+                    return;
+                }
+
+                DateTime startDate = new DateTime(1991, 1, 1);
+                DateTime endDate = DateTime.ParseExact(rawData.Last().Date, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+
+                var fullData = new List<AgricData>();
+                for (var currentDate = startDate; currentDate <= endDate; currentDate = currentDate.AddDays(1))
+                {
+                    if (currentDate.Month == 2 && currentDate.Day == 29) continue;
+
+                    string dateString = currentDate.ToString("yyyyMMdd");
+                    var existingData = rawData.FirstOrDefault(d => d.Date == dateString);
+
+                    fullData.Add(new AgricData
+                    {
+                        Date = dateString,
+                        Rate = existingData?.Rate
+                    });
+                }
+
+                for (int i = 0; i < fullData.Count; i++)
+                {
+                    if (string.IsNullOrEmpty(fullData[i].Rate))
+                    {
+                        DateTime currentDate = DateTime.ParseExact(fullData[i].Date, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+                        string closestBeforeRate = null;
+                        string closestAfterRate = null;
+
+                        for (int j = i - 1; j >= 0 && (currentDate - DateTime.ParseExact(fullData[j].Date, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture)).Days <= 31; j--)
+                        {
+                            if (!string.IsNullOrEmpty(fullData[j].Rate))
+                            {
+                                closestBeforeRate = fullData[j].Rate;
+                                break;
+                            }
+                        }
+
+                        for (int j = i + 1; j < fullData.Count && (DateTime.ParseExact(fullData[j].Date, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture) - currentDate).Days <= 31; j++)
+                        {
+                            if (!string.IsNullOrEmpty(fullData[j].Rate))
+                            {
+                                closestAfterRate = fullData[j].Rate;
+                                break;
+                            }
+                        }
+
+                        if (closestBeforeRate != null && closestAfterRate != null)
+                        {
+                            fullData[i].Rate = ((Convert.ToDouble(closestBeforeRate) + Convert.ToDouble(closestAfterRate)) / 2).ToString("F2");
+                            await LogInterpolationAsync(fullData[i].Date, fac_code, fullData[i].Rate);
+                        }
+                    }
+                }
+
+                string directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AgAG");
+                if (!Directory.Exists(directoryPath))
+                {
+                    Directory.CreateDirectory(directoryPath);
+                }
+
+                string filePath = Path.Combine(directoryPath, $"{fac_code}.csv");
+
+                using (var writer = new StreamWriter(filePath))
+                {
+                    await writer.WriteLineAsync("yyyy,mm,dd,JD,rate");
+
+                    foreach (var data in fullData)
+                    {
+                        string valueToWrite = data.Rate;
+                        if (string.IsNullOrEmpty(valueToWrite))
+                        {
+                            valueToWrite = "-9999";
+                        }
+
+                        DateTime currentDate = DateTime.ParseExact(data.Date, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+                        string yyyy = currentDate.Year.ToString();
+                        string mm = currentDate.Month.ToString("D2");
+                        string dd = currentDate.Day.ToString("D2");
+                        int jd = CalculateJulianDay(currentDate);
+
+                        await writer.WriteLineAsync($"{yyyy},{mm},{dd},{jd},{valueToWrite}");
+                    }
+                }
+
+                WriteStatus($"fac_code: {fac_code}의 CSV 파일이 보간 처리를 포함하여 생성되었습니다.");
             }
             catch (Exception ex)
             {
@@ -1130,6 +1268,104 @@ namespace JS_DAMRSRT
                 }
             }
         }
+
+        
+        private async Task ExtendDiscontinuedDataAsync()
+        {
+            // 1. 지원이 종료된 지역 코드 목록
+            var discontinuedCodes = new List<string>
+    {
+        "2914010008", "2917010030", "2920010054", "2920010055", "4113010002",
+        "4153010009", "4315010003", "4315010022", "4377010043", "4423010044",
+        "4574010038", "4672010106", "4683010147", "4684010186", "4711010035",
+        "4775010157", "4783010039", "4783010042", "4825010142"
+    };
+
+            string agagDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AgAG");
+
+            if (!Directory.Exists(agagDirectory))
+            {
+                WriteStatus("오류: AgAG 폴더를 찾을 수 없습니다.");
+                return;
+            }
+
+            try
+            {
+                // 2. 모든 파일 중 가장 마지막 날짜(마스터 종료일) 찾기
+                DateTime masterEndDate = DateTime.MinValue;
+                var allFiles = Directory.GetFiles(agagDirectory, "*.csv");
+
+                foreach (var file in allFiles)
+                {
+                    var lastLine = File.ReadLines(file).LastOrDefault();
+                    if (lastLine != null)
+                    {
+                        var parts = lastLine.Split(',');
+                        if (parts.Length >= 3)
+                        {
+                            if (int.TryParse(parts[0], out int year) && int.TryParse(parts[1], out int month) && int.TryParse(parts[2], out int day))
+                            {
+                                DateTime currentDate = new DateTime(year, month, day);
+                                if (currentDate > masterEndDate)
+                                {
+                                    masterEndDate = currentDate;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (masterEndDate == DateTime.MinValue)
+                {
+                    WriteStatus("오류: 기준이 될 마지막 날짜를 찾을 수 없습니다.");
+                    return;
+                }
+                WriteStatus($"데이터 최종 기준일: {masterEndDate:yyyy-MM-dd}");
+
+                // 3. 지원 종료된 각 파일을 순회하며 데이터 추가
+                foreach (var code in discontinuedCodes)
+                {
+                    string filePath = Path.Combine(agagDirectory, $"{code}.csv");
+                    if (!File.Exists(filePath))
+                    {
+                        WriteStatus($"파일 없음: {code}.csv - 건너뜁니다.");
+                        continue;
+                    }
+
+                    var lastLine = File.ReadLines(filePath).LastOrDefault();
+                    if (lastLine == null) continue;
+
+                    var parts = lastLine.Split(',');
+                    DateTime stationLastDate = new DateTime(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
+
+                    if (stationLastDate >= masterEndDate)
+                    {
+                        // 이미 최신 상태이면 건너뜀
+                        continue;
+                    }
+
+                    WriteStatus($"{code}.csv 파일 처리 중... ({stationLastDate:yyyy-MM-dd} -> {masterEndDate:yyyy-MM-dd})");
+
+                    var linesToAdd = new StringBuilder();
+                    for (DateTime date = stationLastDate.AddDays(1); date <= masterEndDate; date = date.AddDays(1))
+                    {
+                        // 2월 29일은 건너뜀
+                        if (date.Month == 2 && date.Day == 29) continue;
+
+                        int jd = CalculateJulianDay(date);
+                        linesToAdd.AppendLine($"{date.Year},{date.Month:D2},{date.Day:D2},{jd},-9999");
+                    }
+
+                    await Task.Run(() => File.AppendAllText(filePath, linesToAdd.ToString()));
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteStatus($"오류 발생: {ex.Message}");
+            }
+        }
+
+
         //////////////////////////////////////////////////////////////////////////////
         //////////////////////////////////////////////////////////////////////////////
 
@@ -3102,6 +3338,43 @@ namespace JS_DAMRSRT
         private string GetProcessLogFilePath(string processName, string today)
         {
             return Path.Combine(processLogDir, $"{processName}_{today}.log");
+        }
+
+        private async Task LogInterpolationAsync(string date, string stationCode, string interpolatedValue)
+        {
+            try
+            {
+                string directoryPath = AppDomain.CurrentDomain.BaseDirectory;
+                string filePath = Path.Combine(directoryPath, "interpolation_log.csv");
+
+                // 파일 헤더 (파일이 없을 때만 한 번 기록)
+                string header = "일자,지점코드,보간된_데이터" + Environment.NewLine;
+
+                lock (_logLock)
+                {
+                    if (!File.Exists(filePath))
+                    {
+                        File.WriteAllText(filePath, header);
+                    }
+                }
+
+                // 로그 내용 기록
+                string logLine = $"{date},{stationCode},{interpolatedValue}" + Environment.NewLine;
+
+                // 비동기 방식으로 파일에 내용 추가
+                // File.AppendAllTextAsync는 .NET Core/.NET 5+ 에서 사용 가능합니다.
+                // .NET Framework를 사용 중이라면 동기 방식인 File.AppendAllText를 lock 내부에서 사용해야 합니다.
+                lock (_logLock)
+                {
+                    File.AppendAllText(filePath, logLine);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                // 로그 기록 중 오류 발생 시 콘솔이나 다른 로그 파일에 기록
+                Console.WriteLine($"로그 기록 실패: {ex.Message}");
+            }
         }
 
     }
