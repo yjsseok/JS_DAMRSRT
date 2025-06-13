@@ -1182,7 +1182,7 @@ namespace JS_DAMRSRT
                         if (closestBeforeRate != null && closestAfterRate != null)
                         {
                             fullData[i].Rate = ((Convert.ToDouble(closestBeforeRate) + Convert.ToDouble(closestAfterRate)) / 2).ToString("F2");
-                            await LogInterpolationAsync(fullData[i].Date, fac_code, fullData[i].Rate);
+                            LogInterpolationAsync(fullData[i].Date, fac_code, fullData[i].Rate);
                         }
                     }
                 }
@@ -3340,7 +3340,7 @@ namespace JS_DAMRSRT
             return Path.Combine(processLogDir, $"{processName}_{today}.log");
         }
 
-        private async Task LogInterpolationAsync(string date, string stationCode, string interpolatedValue)
+        private void LogInterpolationAsync(string date, string stationCode, string interpolatedValue)
         {
             try
             {
