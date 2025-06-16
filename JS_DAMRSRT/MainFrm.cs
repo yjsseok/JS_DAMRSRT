@@ -150,6 +150,11 @@ namespace JS_DAMRSRT
                     if (thiessenRow["code"].ToString() == stn)
                     {
                         decimal ratio = Convert.ToDecimal(thiessenRow["ratio"]);
+                        
+                        if (stn == "174" && tm < new DateTime(2011, 4, 1)) /// 174 지점 은 2011년 4월 1일 이전에는 데이터, 해당 날짜 이전의 비율은 0으로 처리합니다.
+                        {
+                            ratio = 0;
+                        }
 
                         if (!areaRainfall.ContainsKey(tmFormatted))
                         {
@@ -869,6 +874,34 @@ namespace JS_DAMRSRT
                                 {
                                     string ymd = dataReader["ymd"].ToString();
                                     string flow = dataReader["flow"].ToString();
+
+                                    // ==========================================================
+                                    // ▼▼▼ 여기에 지점별 날짜 필터링 로직 추가 ▼▼▼
+                                    // ==========================================================
+                                    DateTime currentDate = DateTime.ParseExact(ymd, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+                                    bool shouldSkip = false;
+
+                                    switch (sgg_cd)
+                                    {
+                                        case "42230":
+                                            if (currentDate.Year < 2006) shouldSkip = true;
+                                            break;
+                                        case "42800":
+                                            if (currentDate.Year < 2010) shouldSkip = true;
+                                            break;
+                                        case "47170":
+                                        case "47760":
+                                            if (currentDate.Year < 2000) shouldSkip = true;
+                                            break;
+                                    }
+
+                                    // 제외 조건에 해당하면 이 데이터를 건너뛰고 다음 데이터로 넘어감
+                                    if (shouldSkip)
+                                    {
+                                        continue;
+                                    }
+                                    // ==========================================================
+
 
                                     if (string.IsNullOrEmpty(flow))//|| flow == "0")
                                     {
