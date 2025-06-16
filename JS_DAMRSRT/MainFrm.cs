@@ -803,7 +803,6 @@ namespace JS_DAMRSRT
         {
             await Load_FlowRate();
         }
-
         private async Task Load_FlowRate()
         {
             var stopwatch = new Stopwatch();
@@ -814,35 +813,64 @@ namespace JS_DAMRSRT
             {
                 using (var conn = new NpgsqlConnection(strConn))
                 {
-                    conn.Open();
+                    await conn.OpenAsync();
 
+                    // 처리할 sgg_cd 목록을 먼저 가져옵니다.
+                    var sggCdList = new List<Tuple<string, string>>();
                     string selectQuery = "SELECT sgg_cd, obs_cd FROM drought_code WHERE sort = 'FR'";
                     using (var selectCmd = new NpgsqlCommand(selectQuery, conn))
-                    using (var reader = selectCmd.ExecuteReader())
+                    using (var reader = await selectCmd.ExecuteReaderAsync())
                     {
-                        var scheduler = new LimitedConcurrencyLevelTaskScheduler(Environment.ProcessorCount);
-                        var factory = new TaskFactory(scheduler);
-                        List<Task> tasks = new List<Task>();
-
-                        while (reader.Read())
+                        while (await reader.ReadAsync())
                         {
                             string sgg_cd = reader["sgg_cd"].ToString();
                             string obs_cd = reader["obs_cd"].ToString();
 
-                            if (string.IsNullOrEmpty(obs_cd))
+                            if (!string.IsNullOrEmpty(obs_cd))
                             {
-                                continue;
+                                sggCdList.Add(new Tuple<string, string>(sgg_cd, obs_cd));
                             }
-
-                            tasks.Add(factory.StartNew(() => ProcessFlowRate(sgg_cd, obs_cd, strConn)));
                         }
+                    } // reader는 여기서 자동으로 닫힙니다.
 
-                        await Task.WhenAll(tasks);
-
-                        WriteStatus("모든 작업이 완료되었습니다.");
-                        stopwatch.Stop();
-                        WriteStatus($"총 처리 시간: {stopwatch.Elapsed.TotalSeconds:F2}초");
+                    // 1. 모든 유량 데이터 중 가장 마지막 날짜(마스터 종료일)를 찾습니다.
+                    DateTime masterEndDate = DateTime.MinValue;
+                    string maxDateQuery = "SELECT MAX(ymd) FROM tb_wamis_flowdtdata";
+                    using (var maxDateCmd = new NpgsqlCommand(maxDateQuery, conn))
+                    {
+                        var result = await maxDateCmd.ExecuteScalarAsync();
+                        if (result != null && result != DBNull.Value)
+                        {
+                            masterEndDate = DateTime.ParseExact(result.ToString(), "yyyyMMdd", CultureInfo.InvariantCulture);
+                        }
                     }
+
+                    if (masterEndDate == DateTime.MinValue)
+                    {
+                        WriteStatus("기준이 될 최종 날짜를 찾을 수 없습니다. 유량 데이터 처리를 중단합니다.");
+                        return;
+                    }
+
+                    WriteStatus($"모든 유량 파일의 최종 기준일: {masterEndDate:yyyy-MM-dd}");
+
+                    // 2. 각 sgg_cd를 병렬로 처리하며 마스터 종료일을 전달합니다.
+                    var scheduler = new LimitedConcurrencyLevelTaskScheduler(Environment.ProcessorCount);
+                    var factory = new TaskFactory(scheduler);
+                    List<Task> tasks = new List<Task>();
+
+                    foreach (var sggInfo in sggCdList)
+                    {
+                        string sgg_cd = sggInfo.Item1;
+                        string obs_cd = sggInfo.Item2;
+
+                        tasks.Add(factory.StartNew(() => ProcessFlowRate(sgg_cd, obs_cd, strConn, masterEndDate)));
+                    }
+
+                    await Task.WhenAll(tasks);
+
+                    WriteStatus("모든 유량 작업이 완료되었습니다.");
+                    stopwatch.Stop();
+                    WriteStatus($"총 처리 시간: {stopwatch.Elapsed.TotalSeconds:F2}초");
                 }
             }
             catch (Exception ex)
@@ -850,7 +878,8 @@ namespace JS_DAMRSRT
                 WriteStatus($"오류 발생: {ex.Message}");
             }
         }
-        private void ProcessFlowRate(string sgg_cd, string obs_cd, string strConn)
+        // 메서드 시그니처에 masterEndDate 파라미터를 추가합니다.
+        private void ProcessFlowRate(string sgg_cd, string obs_cd, string strConn, DateTime masterEndDate)
         {
             try
             {
@@ -897,7 +926,7 @@ namespace JS_DAMRSRT
                                             break;
                                     }
 
-                                    // 제외 조건에 해당하면 이 데이터를 건너뛰고 다음 데이터로 넘어감
+                                    // 제외 조건에 해당하면 이 데이터의 '값'을 건너뛰고 다음 데이터로 넘어감
                                     if (shouldSkip)
                                     {
                                         continue;
@@ -926,20 +955,14 @@ namespace JS_DAMRSRT
                         .OrderBy(g => g.Date)
                         .ToList();
 
-                    if (!groupedData.Any())
-                    {
-                        WriteStatus($"sgg_cd: {sgg_cd}에 대한 유효한 데이터가 없어 처리를 중단합니다.");
-                        return;
-                    }
-
-                    // 1. 데이터 시작일을 1991년 1월 1일로 설정
+                    // 데이터 시작일은 1991년 1월 1일로 설정
                     DateTime startDate = new DateTime(1991, 1, 1);
-                    // 2. 데이터 종료일은 DB에 있는 마지막 데이터 날짜로 설정
-                    DateTime endDate = DateTime.ParseExact(groupedData.Last().Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+                    // 데이터 종료일은 파라미터로 받은 masterEndDate를 사용
+                    DateTime endDate = masterEndDate;
 
                     var fullData = new List<dynamic>();
 
-                    // 3. 시작일부터 종료일까지 하루씩 순회
+                    // 시작일부터 마스터 종료일까지 하루씩 순회
                     for (var currentDate = startDate; currentDate <= endDate; currentDate = currentDate.AddDays(1))
                     {
                         // 윤년의 2월 29일은 제외
@@ -955,7 +978,7 @@ namespace JS_DAMRSRT
                         }
                         else
                         {
-                            // 4. 해당 날짜에 데이터가 없으면 결측값(-9999)을 입력
+                            // 해당 날짜에 데이터가 없거나 필터링 되었다면 결측값(-9999)을 입력
                             fullData.Add(new { Date = dateString, Flow = -9999.0 });
                         }
                     }
@@ -971,7 +994,7 @@ namespace JS_DAMRSRT
                     {
                         writer.WriteLine("yyyy,mm,dd,JD,Flow_Rate");
 
-                        // 5. 결측값이 채워진 전체 데이터를 CSV 파일로 생성
+                        // 결측값이 채워진 전체 데이터를 CSV 파일로 생성
                         foreach (var data in fullData)
                         {
                             string yyyy = data.Date.Substring(0, 4);
@@ -986,7 +1009,7 @@ namespace JS_DAMRSRT
                     }
 
                     SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
-                    WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다. (1991년부터, 결측값 -9999 처리 완료)");
+                    WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다. (최종일: {endDate:yyyy-MM-dd})");
                 }
             }
             catch (Exception ex)
@@ -999,6 +1022,53 @@ namespace JS_DAMRSRT
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
+        //private async Task Load_FlowRate()
+        //{
+        //    var stopwatch = new Stopwatch();
+        //    stopwatch.Start();
+        //    string strConn = GetConnectionString();
+
+        //    try
+        //    {
+        //        using (var conn = new NpgsqlConnection(strConn))
+        //        {
+        //            conn.Open();
+
+        //            string selectQuery = "SELECT sgg_cd, obs_cd FROM drought_code WHERE sort = 'FR'";
+        //            using (var selectCmd = new NpgsqlCommand(selectQuery, conn))
+        //            using (var reader = selectCmd.ExecuteReader())
+        //            {
+        //                var scheduler = new LimitedConcurrencyLevelTaskScheduler(Environment.ProcessorCount);
+        //                var factory = new TaskFactory(scheduler);
+        //                List<Task> tasks = new List<Task>();
+
+        //                while (reader.Read())
+        //                {
+        //                    string sgg_cd = reader["sgg_cd"].ToString();
+        //                    string obs_cd = reader["obs_cd"].ToString();
+
+        //                    if (string.IsNullOrEmpty(obs_cd))
+        //                    {
+        //                        continue;
+        //                    }
+
+        //                    tasks.Add(factory.StartNew(() => ProcessFlowRate(sgg_cd, obs_cd, strConn)));
+        //                }
+
+        //                await Task.WhenAll(tasks);
+
+        //                WriteStatus("모든 작업이 완료되었습니다.");
+        //                stopwatch.Stop();
+        //                WriteStatus($"총 처리 시간: {stopwatch.Elapsed.TotalSeconds:F2}초");
+        //            }
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        WriteStatus($"오류 발생: {ex.Message}");
+        //    }
+        //}
+
         //private void ProcessFlowRate(string sgg_cd, string obs_cd, string strConn)
         //{
         //    try
