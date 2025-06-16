@@ -850,7 +850,6 @@ namespace JS_DAMRSRT
                 WriteStatus($"오류 발생: {ex.Message}");
             }
         }
-
         private void ProcessFlowRate(string sgg_cd, string obs_cd, string strConn)
         {
             try
@@ -927,12 +926,39 @@ namespace JS_DAMRSRT
                         .OrderBy(g => g.Date)
                         .ToList();
 
-                    // 2월 29일 제거
-                    groupedData = groupedData.Where(data =>
+                    if (!groupedData.Any())
                     {
-                        DateTime date = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
-                        return !(date.Month == 2 && date.Day == 29 && DateTime.IsLeapYear(date.Year));
-                    }).ToList();
+                        WriteStatus($"sgg_cd: {sgg_cd}에 대한 유효한 데이터가 없어 처리를 중단합니다.");
+                        return;
+                    }
+
+                    // 1. 데이터 시작일을 1991년 1월 1일로 설정
+                    DateTime startDate = new DateTime(1991, 1, 1);
+                    // 2. 데이터 종료일은 DB에 있는 마지막 데이터 날짜로 설정
+                    DateTime endDate = DateTime.ParseExact(groupedData.Last().Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+
+                    var fullData = new List<dynamic>();
+
+                    // 3. 시작일부터 종료일까지 하루씩 순회
+                    for (var currentDate = startDate; currentDate <= endDate; currentDate = currentDate.AddDays(1))
+                    {
+                        // 윤년의 2월 29일은 제외
+                        if (currentDate.Month == 2 && currentDate.Day == 29) continue;
+
+                        string dateString = currentDate.ToString("yyyyMMdd");
+                        var existingData = groupedData.FirstOrDefault(d => d.Date == dateString);
+
+                        if (existingData != null)
+                        {
+                            // 해당 날짜에 데이터가 있으면 그 값을 사용
+                            fullData.Add(new { Date = dateString, Flow = existingData.Flow });
+                        }
+                        else
+                        {
+                            // 4. 해당 날짜에 데이터가 없으면 결측값(-9999)을 입력
+                            fullData.Add(new { Date = dateString, Flow = -9999.0 });
+                        }
+                    }
 
                     string directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Flow_Rate");
                     if (!Directory.Exists(directoryPath))
@@ -944,7 +970,9 @@ namespace JS_DAMRSRT
                     using (var writer = new StreamWriter(filePath))
                     {
                         writer.WriteLine("yyyy,mm,dd,JD,Flow_Rate");
-                        foreach (var data in groupedData)
+
+                        // 5. 결측값이 채워진 전체 데이터를 CSV 파일로 생성
+                        foreach (var data in fullData)
                         {
                             string yyyy = data.Date.Substring(0, 4);
                             string mm = data.Date.Substring(4, 2);
@@ -956,9 +984,9 @@ namespace JS_DAMRSRT
                             writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Flow}");
                         }
                     }
-                    //     SaveToDroughtTable("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
-                    SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd,File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
-                    WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다.");
+
+                    SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
+                    WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다. (1991년부터, 결측값 -9999 처리 완료)");
                 }
             }
             catch (Exception ex)
@@ -966,6 +994,126 @@ namespace JS_DAMRSRT
                 WriteStatus($"sgg_cd: {sgg_cd} 처리 중 오류 발생: {ex.Message}");
             }
         }
+        /// <summary>
+        /// 백업
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        //private void ProcessFlowRate(string sgg_cd, string obs_cd, string strConn)
+        //{
+        //    try
+        //    {
+        //        using (var conn = new NpgsqlConnection(strConn))
+        //        {
+        //            conn.Open();
+
+        //            string[] obsCodes = obs_cd.Split('_');
+        //            List<string> dataLines = new List<string>();
+
+        //            foreach (string code in obsCodes)
+        //            {
+        //                string dataQuery = "SELECT ymd, flow FROM tb_wamis_flowdtdata WHERE obscd = @code";
+        //                using (var dataCmd = new NpgsqlCommand(dataQuery, conn))
+        //                {
+        //                    dataCmd.Parameters.AddWithValue("@code", code);
+        //                    using (var dataReader = dataCmd.ExecuteReader())
+        //                    {
+        //                        while (dataReader.Read())
+        //                        {
+        //                            string ymd = dataReader["ymd"].ToString();
+        //                            string flow = dataReader["flow"].ToString();
+
+        //                            // ==========================================================
+        //                            // ▼▼▼ 여기에 지점별 날짜 필터링 로직 추가 ▼▼▼
+        //                            // ==========================================================
+        //                            DateTime currentDate = DateTime.ParseExact(ymd, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+        //                            bool shouldSkip = false;
+
+        //                            switch (sgg_cd)
+        //                            {
+        //                                case "42230":
+        //                                    if (currentDate.Year < 2006 || currentDate > new DateTime(2020, 12, 31))
+        //                                    {
+        //                                        shouldSkip = true;
+        //                                    }
+        //                                    break;
+        //                                case "42800":
+        //                                    if (currentDate.Year < 2010) shouldSkip = true;
+        //                                    break;
+        //                                case "47170":
+        //                                case "47760":
+        //                                    if (currentDate.Year < 2000) shouldSkip = true;
+        //                                    break;
+        //                            }
+
+        //                            // 제외 조건에 해당하면 이 데이터를 건너뛰고 다음 데이터로 넘어감
+        //                            if (shouldSkip)
+        //                            {
+        //                                continue;
+        //                            }
+        //                            // ==========================================================
+
+
+        //                            if (string.IsNullOrEmpty(flow))//|| flow == "0")
+        //                            {
+        //                                flow = "-9999";
+        //                            }
+
+        //                            dataLines.Add($"{ymd},{flow}");
+        //                        }
+        //                    }
+        //                }
+        //            }
+
+        //            var groupedData = dataLines
+        //                .GroupBy(line => line.Split(',')[0]) // 날짜별로 그룹화
+        //                .Select(g => new
+        //                {
+        //                    Date = g.Key,
+        //                    Flow = g.Select(line => Convert.ToDouble(line.Split(',')[1])).Sum()
+        //                })
+        //                .OrderBy(g => g.Date)
+        //                .ToList();
+
+        //            // 2월 29일 제거
+        //            groupedData = groupedData.Where(data =>
+        //            {
+        //                DateTime date = DateTime.ParseExact(data.Date, "yyyyMMdd", CultureInfo.InvariantCulture);
+        //                return !(date.Month == 2 && date.Day == 29 && DateTime.IsLeapYear(date.Year));
+        //            }).ToList();
+
+        //            string directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Flow_Rate");
+        //            if (!Directory.Exists(directoryPath))
+        //            {
+        //                Directory.CreateDirectory(directoryPath);
+        //            }
+
+        //            string filePath = Path.Combine(directoryPath, $"{sgg_cd}.csv");
+        //            using (var writer = new StreamWriter(filePath))
+        //            {
+        //                writer.WriteLine("yyyy,mm,dd,JD,Flow_Rate");
+        //                foreach (var data in groupedData)
+        //                {
+        //                    string yyyy = data.Date.Substring(0, 4);
+        //                    string mm = data.Date.Substring(4, 2);
+        //                    string dd = data.Date.Substring(6, 2);
+
+        //                    DateTime date = new DateTime(Convert.ToInt32(yyyy), Convert.ToInt32(mm), Convert.ToInt32(dd));
+        //                    int jd = CalculateJulianDay(date);
+
+        //                    writer.WriteLine($"{yyyy},{mm},{dd},{jd},{data.Flow}");
+        //                }
+        //            }
+        //            //     SaveToDroughtTable("tb_Actualdrought_DAM", sgg_cd, File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
+        //            SaveToDroughtTableWithCopy("tb_Actualdrought_DAM", sgg_cd,File.ReadAllLines(filePath).Skip(1).ToList(), strConn);
+        //            WriteStatus($"sgg_cd: {sgg_cd}의 CSV 파일이 생성되었습니다.");
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        WriteStatus($"sgg_cd: {sgg_cd} 처리 중 오류 발생: {ex.Message}");
+        //    }
+        //}
         //////////////////////////////////////////////////////////////////////////////
         //////////////////////////////////////////////////////////////////////////////
         private async void Btn_Load_Ag_Click(object sender, EventArgs e)
