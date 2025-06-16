@@ -884,7 +884,10 @@ namespace JS_DAMRSRT
                                     switch (sgg_cd)
                                     {
                                         case "42230":
-                                            if (currentDate.Year < 2006) shouldSkip = true;
+                                            if (currentDate.Year < 2006 || currentDate > new DateTime(2020, 12, 31))
+                                            {
+                                                shouldSkip = true;
+                                            }
                                             break;
                                         case "42800":
                                             if (currentDate.Year < 2010) shouldSkip = true;
